@@ -238,7 +238,10 @@ note it.
    must be identical. A file the user edited between the runs keeps their edit.
 3. Archive the task file to `ai/archive/setup-<product>/tasks/`.
 4. Offer one commit of the framework files, listed by explicit path (never
-   `git add -A`). Push only when asked.
+   `git add -A`). Push only when asked. The Codex checkpoint reviews it like any
+   commit; on a first setup that is the whole kit. Fix findings in files this setup
+   wrote. Findings in kit files copied unchanged go to the user, who decides whether to
+   commit by hand or fix the kit first.
 5. Report:
    - what was built;
    - the verification evidence;

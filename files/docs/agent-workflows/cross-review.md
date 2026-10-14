@@ -32,11 +32,13 @@ Codex and Claude still disagree after a rebuttal, report the findings to the use
 
 The Claude `PreToolUse` hook on `Bash` (filtered by `if: Bash(*commit*)`) denies a
 `git commit` while any framework or product checkout, including lanes, has staged changes
-without a passing receipt. The denial lists the review command for each. It also denies
-commit forms whose content it cannot see beforehand: `-a`, `-i`, `-o`, `-p`, pathspecs,
-staging in the same command, commits inside a quoted wrapper (`bash -c`), and Git
-pointed at another index or repository (`GIT_INDEX_FILE=`, `--git-dir`, `git -c`). Stage in
-one command, review, then commit in another. A hook that cannot run denies.
+without a passing receipt. The denial lists the review command for each. It allows only
+commits whose content it can check beforehand: `git [-C <dir>] commit` with message,
+author and amend options, optionally after `cd` or beside read-only Git commands
+(`status`, `log`, `show`, `diff`, `push`). It denies every other form that may commit:
+`-a`, `-p`, pathspecs, staging in the same command, wrappers (`bash -c`, `time`, `{ }`),
+command substitution, environment prefixes and other Git options. Stage in one command,
+review, then commit in another. A hook that cannot run denies.
 
 Only Claude's commits are checked. Human commits, merges in a terminal and other tools
 are not. This is a workflow guard, not a security boundary: a script that commits

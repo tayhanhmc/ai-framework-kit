@@ -72,30 +72,23 @@ SCHEMA = {
 }
 # A commit mentioned anywhere, not `commit-tree` or `commit-graph`; parsed precisely below.
 MENTION = re.compile(r"\bgit\b.*\bcommit(?![-\w])", re.DOTALL)
-# Subcommands that change the index; with a commit in the same command, the hook would
-# check an index the commit never uses.
-STAGING = {
-    "add", "rm", "mv", "stage", "restore", "reset", "apply", "checkout", "switch", "stash",
-    "update-index", "read-tree", "merge", "cherry-pick", "revert", "am", "pull", "rebase",
+# The hook allows only commit forms whose content it can check beforehand: a plain
+# `git [-C <dir>] commit` with the options below, beside `cd`, read-only Git commands and
+# commands that do not touch Git. Anything else that may commit is denied.
+SEPARATORS = {";", "&&", "||", "|", "&", "|&"}
+COMMIT_FLAGS = set("qvsn")
+COMMIT_VALUES = set("mFcC")  # For short options the rest of the token is the value.
+COMMIT_LONG_FLAGS = {
+    "--quiet", "--verbose", "--signoff", "--no-verify", "--amend", "--no-edit",
+    "--allow-empty", "--allow-empty-message",
 }  # fmt: skip
-OPERATORS = {";", "&&", "||", "|", "&", "\n", "(", ")"}
-GIT_VALUE_OPTIONS = {"-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path"}
-# Git options and variables that point a commit at another index or repository.
-REDIRECT = re.compile(
-    r"\bGIT_(?:INDEX_FILE|DIR|WORK_TREE|COMMON_DIR|OBJECT_DIRECTORY|ALTERNATE_OBJECT_DIRECTORIES"
-    r"|CONFIG\w*)="
-    r"|\bgit\s+(?:-C\s+\S+\s+)*(?:-c\s|--git-dir|--work-tree)"
-)
-# Commit options that take a value; for short ones the rest of the token is the value.
-VALUE_OPTIONS = set("mFCct")
-VALUE_LONG = {
+COMMIT_LONG_VALUES = {
     "--message", "--file", "--reuse-message", "--reedit-message", "--template",
     "--author", "--date", "--fixup", "--squash", "--cleanup", "--trailer",
 }  # fmt: skip
-WIDENING = set("aiop")
-WIDENING_LONG = {
-    "--all", "--include", "--only", "--patch", "--interactive", "--pathspec-from-file", "--",
-}  # fmt: skip
+READ_ONLY_GIT = {"status", "log", "show", "diff", "rev-parse", "push"}
+# Output redirection such as `2>&1` or `> log`, removed before parsing.
+OUTPUT_REDIRECT = re.compile(r"(?<=\s)\d?(?:>>?|>&|&>)\s*[\w./-]+")
 
 
 class ReviewError(Exception):
@@ -203,7 +196,7 @@ def validate_result(data: dict[str, Any]) -> bool:
             or finding["priority"] not in {"P0", "P1", "P2", "P3"}
         ):
             raise ReviewError("invalid review finding")
-    return data["complete"] and not any(f["priority"] != "P3" for f in data["findings"])
+    return data["complete"] and all(f["priority"] == "P3" for f in data["findings"])
 
 
 def codex(target: Path, folder: Path, prompt: str, model: str | None) -> dict[str, Any]:
@@ -376,74 +369,84 @@ def checkouts(root: Path) -> list[Path]:
     return sorted(path for path in found if path.is_relative_to(root))
 
 
-def git_commands(command: str) -> tuple[list[tuple[str, list[str]]], list[str]] | None:
-    """Each `git <subcommand> <args>` in a shell command, and all its tokens.
+def git_words(words: list[str]) -> list[str] | None:
+    """The subcommand and arguments of a plain `git [-C <dir>] ...`, or None."""
+    if not words or words[0] != "git":
+        return None
+    rest = words[1:]
+    while rest[:1] == ["--no-pager"] or (rest[:1] == ["-C"] and len(rest) > 1):
+        rest = rest[1:] if rest[0] == "--no-pager" else rest[2:]
+    return None if not rest or rest[0].startswith("-") else rest
 
-    None if the command cannot be parsed.
-    """
-    lexer = shlex.shlex(command.replace("\n", " ; "), posix=True, punctuation_chars=True)
+
+def option_problem(word: str) -> str | None:
+    """Why a `git commit` argument is not allowed, or None; "value" if it takes the next."""
+    if word.startswith("--"):
+        name = word.split("=", 1)[0]
+        if name in COMMIT_LONG_FLAGS and "=" not in word:
+            return None
+        if name in COMMIT_LONG_VALUES:
+            return None if "=" in word else "value"
+    elif word.startswith("-") and len(word) > 1:
+        for position, letter in enumerate(word[1:], 1):
+            if letter in COMMIT_VALUES:
+                return "value" if position == len(word) - 1 else None
+            if letter not in COMMIT_FLAGS:
+                break
+        else:
+            return None
+    return f"`{word}` may commit content outside the reviewed index"
+
+
+def commit_problem(command: str) -> tuple[bool, str | None]:
+    """Whether a command commits, and why that commit cannot be checked beforehand."""
+    lexer = shlex.shlex(
+        OUTPUT_REDIRECT.sub("", command).replace("\n", " ; "), posix=True, punctuation_chars=True
+    )
     lexer.whitespace_split = True
     try:
         tokens = list(lexer)
     except ValueError:
-        return None
-    found: list[tuple[str, list[str]]] = []
-    words: list[str] = []
-    for token in [*tokens, ";"]:
-        if token not in OPERATORS:
-            words.append(token)
+        return True, "it cannot be parsed; use a plain `git commit -m <message>`"
+    segments: list[list[str]] = [[]]
+    for token in tokens:
+        if token in SEPARATORS:
+            segments.append([])
+        else:
+            segments[-1].append(token)
+    commits, others = [], []
+    for words in segments:
+        rest = git_words(words)
+        if rest and rest[0] == "commit":
+            commits.append(rest[1:])
             continue
-        while words and (words[0] == "env" or re.fullmatch(r"[A-Za-z_]\w*=.*", words[0])):
-            words.pop(0)  # `env` and environment assignments before the command.
-        if words and Path(words[0]).name == "git":
-            rest = words[1:]
-            while rest and rest[0].startswith("-"):
-                option = rest.pop(0)
-                if option in GIT_VALUE_OPTIONS and rest:
-                    rest.pop(0)
-            if rest:
-                found.append((rest[0], rest[1:]))
-        words = []
-    return found, tokens
-
-
-def commit_problem(command: str) -> str | None:
-    """Why a command that mentions a commit cannot be checked in advance, or None."""
-    parsed = git_commands(command)
-    if parsed is None:
-        return "it cannot be parsed; use a plain `git commit -m <message>`"
-    found, tokens = parsed
-    if any(name == "commit" for name, _ in found) and REDIRECT.search(command):
-        return "it points Git at another index or repository; commit plainly in the checkout"
-    # A quoted `git ... commit` runs through a wrapper (`bash -c`, `eval`) unseen, even
-    # next to a plain commit; a commit message that quotes one is refused too.
-    if any(MENTION.search(token) for token in tokens):
-        return "run `git commit` directly, not inside a quoted wrapper or message"
-    commits = [args for name, args in found if name == "commit"]
+        if MENTION.search(" ".join(rest[1:] if rest else words)):
+            # A wrapper (`bash -c`, `time`, `{ }`), another Git option or quoted text.
+            return True, (
+                "run a plain `git commit` in its own command, not through a wrapper, "
+                "prefix, other Git options or quoted text"
+            )
+        others.append((rest, words))
     if not commits:
-        return None
-    if any(name in STAGING for name, _ in found):
-        return "it also changes the index; stage in one command, then review, then commit"
-    for words in commits:
-        expect_value = False
-        for word in words:
-            if expect_value:
-                expect_value = False
-            elif word.startswith("--"):
-                name = word.split("=", 1)[0]
-                if name in WIDENING_LONG:
-                    return f"`{word}` commits content outside the reviewed index"
-                expect_value = name in VALUE_LONG and "=" not in word
-            elif word.startswith("-") and len(word) > 1:
-                for position, letter in enumerate(word[1:], 1):
-                    if letter in WIDENING:
-                        return f"`{word}` commits content outside the reviewed index"
-                    if letter in VALUE_OPTIONS:
-                        expect_value = position == len(word) - 1
-                        break
-            else:
-                return f"pathspec `{word}` commits content outside the reviewed index"
-    return None
+        return False, None
+    if len(commits) > 1 or "$(" in command or "`" in command or "<(" in command:
+        return True, "commit once per command, without command substitution"
+    for rest, words in others:
+        if rest and rest[0] in READ_ONLY_GIT or words[:1] == ["cd"] or not words:
+            continue
+        if any("git" in word.lower() for word in words):
+            return True, "it also runs other Git commands; stage, review, then commit separately"
+    expect_value = False
+    for word in commits[0]:
+        if expect_value:
+            expect_value = False
+            continue
+        problem = option_problem(word)
+        if problem == "value":
+            expect_value = True
+        elif problem:
+            return True, problem
+    return True, None
 
 
 def deny(reason: str, decision: str = "deny") -> dict[str, Any]:
@@ -476,11 +479,10 @@ def hook(payload: dict[str, Any]) -> dict[str, Any]:
     command = str(tool_input.get("command", ""))
     if not MENTION.search(command):
         return {}
-    problem = commit_problem(command)
+    commits, problem = commit_problem(command)
     if problem:
         return deny(f"Commit refused: {problem}.")
-    parsed = git_commands(command)
-    if parsed is None or not any(name == "commit" for name, _ in parsed[0]):
+    if not commits:
         return {}  # It mentions a commit but runs none.
     root = framework_root(Path(payload["cwd"]))
     pending = [path for path in checkouts(root) if staged(path) and not approved(path)]
