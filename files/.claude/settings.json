@@ -1,0 +1,110 @@
+{
+  "permissions": {
+    "deny": [
+      "Read(./**/.env)",
+      "Read(./**/.env.*)",
+      "Read(./**/secrets/**)",
+      "Read(./**/*.pem)",
+      "Read(./**/*.p12)",
+      "Read(./**/id_rsa*)",
+      "Read(./**/.npmrc)",
+      "Read(./**/.pypirc)"
+    ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "uv",
+            "args": [
+              "run",
+              "--isolated",
+              "--no-config",
+              "--no-project",
+              "--python",
+              ">=3.11",
+              "--",
+              "python",
+              "${CLAUDE_PROJECT_DIR}/ai/scripts/garden.py",
+              "--session"
+            ]
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "uv",
+            "args": [
+              "run",
+              "--isolated",
+              "--no-config",
+              "--no-project",
+              "--python",
+              ">=3.11",
+              "--",
+              "python",
+              "${CLAUDE_PROJECT_DIR}/ai/scripts/format_changed.py"
+            ]
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "ExitPlanMode",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "uv",
+            "args": [
+              "run",
+              "--isolated",
+              "--no-config",
+              "--no-project",
+              "--python",
+              ">=3.11",
+              "--",
+              "python",
+              "${CLAUDE_PROJECT_DIR}/ai/scripts/cross_review.py",
+              "hook"
+            ],
+            "timeout": 330,
+            "onFailure": "block"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "uv",
+            "args": [
+              "run",
+              "--isolated",
+              "--no-config",
+              "--no-project",
+              "--python",
+              ">=3.11",
+              "--",
+              "python",
+              "${CLAUDE_PROJECT_DIR}/ai/scripts/cross_review.py",
+              "hook"
+            ],
+            "if": "Bash(*commit*)",
+            "timeout": 330,
+            "onFailure": "block"
+          }
+        ]
+      }
+    ]
+  }
+}

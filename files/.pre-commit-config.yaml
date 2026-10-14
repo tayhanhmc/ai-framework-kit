@@ -1,0 +1,55 @@
+repos:
+  - repo: local
+    hooks:
+      - id: verify-agent-env
+        name: verify agent environment
+        entry: uv run --isolated --no-config --no-project --python ">=3.11" -- python ai/scripts/verify_agent_env.py
+        language: unsupported
+        pass_filenames: false
+        always_run: true
+      - id: garden-static
+        name: garden --static
+        entry: uv run --isolated --no-config --no-project --python ">=3.11" -- python ai/scripts/garden.py --static
+        language: unsupported
+        pass_filenames: false
+        always_run: true
+      - id: uv-lock-check
+        name: uv lock --check
+        entry: uv lock --check
+        language: unsupported
+        pass_filenames: false
+        files: ^(pyproject\.toml|uv\.lock)$
+      - id: detect-secrets
+        name: detect-secrets
+        entry: uv run --locked detect-secrets-hook --baseline .secrets.baseline --exclude-lines 'verified_commit = "[0-9a-f]{40}"'
+        language: unsupported
+        exclude: ^(uv\.lock|\.secrets\.baseline)$
+      - id: check-added-large-files
+        name: check added large files
+        entry: uv run --locked check-added-large-files --maxkb 512
+        language: unsupported
+      - id: check-merge-conflict
+        name: check merge conflict
+        entry: uv run --locked check-merge-conflict
+        language: unsupported
+        types: [text]
+      - id: check-case-conflict
+        name: check case conflict
+        entry: uv run --locked check-case-conflict
+        language: unsupported
+      - id: ruff-check
+        name: ruff check
+        entry: uv run --locked ruff check
+        language: unsupported
+        types: [python]
+      - id: ruff-format
+        name: ruff format --check
+        entry: uv run --locked ruff format --check
+        language: unsupported
+        types: [python]
+      - id: mypy
+        name: mypy
+        entry: uv run --locked mypy
+        language: unsupported
+        pass_filenames: false
+        types: [python]

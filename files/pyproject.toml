@@ -1,0 +1,62 @@
+[project]
+name = "__P__"
+version = "0.1.0"
+description = "AI framework wrapping product codebases for Claude Code and Codex"
+requires-python = ">=3.11"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "deptry==0.25.1",
+    "detect-secrets==1.5.0",
+    "mypy==2.4.0",
+    "poethepoet==0.48.0",
+    "pre-commit==4.7.0",
+    "pre-commit-hooks==6.0.0",
+    "pytest==9.1.1",
+    "pytest-cov==7.1.0",
+    "ruff==0.17.0",
+]
+
+[tool.uv]
+package = false
+required-version = ">=0.12.8"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = ["*/repo", "*/.worktrees"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["workspace_profile", "check_code", "verify_agent_env", "garden", "format_changed", "cross_review"]
+
+[tool.mypy]
+strict = true
+python_version = "3.11"
+files = ["ai/scripts", "tests"]
+mypy_path = "ai/scripts"
+
+[tool.pytest.ini_options]
+pythonpath = ["ai/scripts"]
+testpaths = ["tests"]
+
+[tool.coverage.run]
+source = ["ai/scripts"]
+
+[tool.deptry]
+known_first_party = ["workspace_profile", "check_code", "verify_agent_env", "garden", "format_changed", "cross_review"]
+extend_exclude = [".*/repo", ".*/\\.worktrees"]
+
+[tool.poe.tasks]
+lint = [
+    { cmd = "ruff check ." },
+    { cmd = "ruff format --check ." },
+    { cmd = "mypy" },
+    { cmd = "deptry ." },
+]
+test = "pytest --cov --cov-report=term-missing --cov-fail-under=80"
+format = [{ cmd = "ruff format ." }, { cmd = "ruff check --fix ." }]
+garden = "python ai/scripts/garden.py"
