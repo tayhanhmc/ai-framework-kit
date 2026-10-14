@@ -23,9 +23,10 @@ for `onFailure: block`.
    `cross_review.py review --target . --plan ai/plans/<name>.md`. <!-- garden: ignore -->
 
 P0/P1/P2 findings block; P3 is advisory. An incomplete review, timeout or invalid output
-never passes; an error is retried on the next run, a result is not. To dispute a finding,
-write the evidence to a file and pass `--feedback <file>`: Codex sees its earlier findings
-and the response, and reviews again. Fix confirmed issues, restage and review. When
+never passes; an error is retried on the next run. A result is reused only for the same
+content and context: a changed task file, or a plan after any checkout moved, is reviewed
+again. To dispute a finding, write the evidence to a file and pass `--feedback <file>`:
+Codex sees its earlier findings and the response, and reviews again. Fix confirmed issues, restage and review. When
 Codex and Claude still disagree after a rebuttal, report the findings to the user.
 
 ## Enforcement

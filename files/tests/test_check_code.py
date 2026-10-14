@@ -69,11 +69,12 @@ def test_failure_exits_1_and_runs_every_gate(
 
 
 def test_baseline_failure_only_warns(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    gates = gate("old", FAIL) + gate("fixed", PASS)
+    failing = [sys.executable, "-c", "import sys; sys.exit(1)"]
+    gates = gate("old", failing) + gate("fixed", PASS)
     ws = make_workspace(tmp_path, gates, 'baseline_failing = ["old", "fixed"]\n')
     assert check_code.run(["lint"], cwd=ws) == 0
     out = capsys.readouterr().out
-    assert "<-- old: FAIL (exit 3), baseline: warning only" in out
+    assert "<-- old: FAIL (exit 1), baseline: warning only" in out
     assert "fixed: PASS (listed in baseline_failing; remove it from the profile)" in out
     assert "baseline warnings: old" in out
 
@@ -252,3 +253,26 @@ def test_script_runs_standalone(tmp_path: Path) -> None:
     assert test.returncode == 1
     bad = subprocess.run([sys.executable, str(SCRIPT), "deploy"], capture_output=True, text=True)
     assert bad.returncode == 2
+
+
+def test_baseline_tolerates_only_ordinary_failure(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    broken = [sys.executable, "-c", "import sys; sys.exit(2)"]
+    ws = make_workspace(tmp_path, gate("old", broken), 'baseline_failing = ["old"]\n')
+    assert check_code.run(["lint"], cwd=ws) == 1
+    assert "<-- old: FAIL (exit 2), not the baseline failure (exit 1)" in capsys.readouterr().out
+
+
+def test_target_from_another_repository_is_refused(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    ws = make_workspace(tmp_path, gate("one", PASS))
+    other = tmp_path / "other"
+    other.mkdir()
+    git(other, "init", "-q")
+    assert check_code.run(["lint", "--target", str(other)], cwd=ws) == 2
+    assert "not a checkout of shop" in capsys.readouterr().err
+    scratch = tmp_path / "scratch"
+    git(tmp_path, "clone", "-q", str(ws / "repo"), str(scratch))
+    assert check_code.run(["lint", "--target", str(scratch)], cwd=ws) == 0

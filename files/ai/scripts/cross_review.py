@@ -268,7 +268,9 @@ def run_review(
     folder = store(target)
     receipt_path = folder / f"{key}.json"
     receipt = read_json(receipt_path)
-    if receipt.get("result") and not receipt.get("error") and not feedback:
+    # Reuse a result only for the same task and context; anything else is reviewed again.
+    digest = hashlib.sha256(f"{task}\0{material}".encode()).hexdigest()
+    if receipt.get("result") and receipt.get("digest") == digest and not feedback:
         return receipt
     with locked(folder / "review.lock"):
         run = folder / "runs" / uuid.uuid4().hex
@@ -284,11 +286,12 @@ def run_review(
         except (ReviewError, OSError, ValueError) as exc:
             # Keep the last completed findings; a failed attempt never approves.
             receipt = {"key": key, "approved": False, "error": str(exc), "run": str(run)}
+            receipt["digest"] = ""  # Retried on the next run.
             if prior:
                 receipt["result"] = prior
         else:
             receipt = {"key": key, "approved": validate_result(result), "result": result}
-            receipt["run"] = str(run)
+            receipt.update(run=str(run), digest=digest)
         write_json(receipt_path, receipt)
     return receipt
 
@@ -316,11 +319,18 @@ def review_plan(
     root: Path, plan: str, feedback: str = "", model: str | None = None
 ) -> dict[str, Any]:
     key = "plan-" + hashlib.sha256(plan.encode()).hexdigest()
+    root = checkout(root)
+    heads = ", ".join(
+        f"{os.path.relpath(path, root)}@"
+        + (git(path, "rev-parse", "-q", "--verify", "HEAD", ok=(0, 1)).stdout.decode().strip())
+        for path in checkouts(root)
+    )
     task = (
         f"Review this plan before implementation, against the real code under {root}"
-        " (framework and product checkouts), its constraints and simpler alternatives."
+        f" (framework and product checkouts at {heads}), its constraints and simpler"
+        " alternatives."
     )
-    return run_review(checkout(root), key, task, f"PLAN\n{plan}", feedback, model)
+    return run_review(root, key, task, f"PLAN\n{plan}", feedback, model)
 
 
 def approved(target: Path) -> bool:

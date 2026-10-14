@@ -8,18 +8,22 @@ Contract:
       the framework root, else the nearest `workspace.toml` above it).
     - `--target` resolves relative to the current folder, then to the workspace; the default
       is the profile's clone. A lane is a checkout under `<workspace>/.worktrees/<lane>`.
+      The target must share the clone's repository, or be a clone whose `origin` is the
+      profile's remote or the clone (the setup's scratch clone).
     - The first output line names the target, its commit, branch and dirty state.
     - Gates run in profile order, from the target's checkout root, with `VIRTUAL_ENV` removed
       from the environment so the framework's environment does not leak into product tools.
     - `--skip NAME` is the only way to leave a gate out; every skip is printed. An unknown
       name is an error, so a typo cannot pass silently.
-    - A failing gate listed in the profile's `baseline_failing` only warns.
+    - A gate listed in the profile's `baseline_failing` only warns when it fails with exit 1;
+      any other exit code (a crash, usage error or interruption) fails.
     - Each gate prints its name, result and run time; a summary closes the run.
 
 Exit codes:
     0  every gate that ran passed (baseline failures only warn)
     1  a gate outside `baseline_failing` failed
-    2  could not run: no or invalid profile, target missing or not a git checkout, a gate's
+    2  could not run: no or invalid profile, target missing, not a git checkout or not this
+       product's repository, a gate's
        tool not on PATH, an empty plan (no gates, or all skipped), or a gate failed to start.
        Exit 2 is never a pass.
 """
@@ -75,6 +79,10 @@ class Result:
     def passed(self) -> bool:
         return self.returncode == 0
 
+    @property
+    def warned(self) -> bool:
+        return self.baseline and self.returncode == 1
+
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -127,11 +135,21 @@ def _git(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
         raise CannotRun(f"cannot run git: {exc}") from exc
 
 
-def describe_target(path: Path) -> Target:
+def common_dir(root: Path) -> Path | None:
+    found = _git(root, "rev-parse", "--path-format=absolute", "--git-common-dir")
+    return Path(found.stdout.strip()).resolve() if found.returncode == 0 else None
+
+
+def describe_target(path: Path, profile: Profile) -> Target:
     top = _git(path, "rev-parse", "--show-toplevel")
     root = Path(top.stdout.strip()).resolve()
     if top.returncode != 0 or root != path.resolve():
         raise CannotRun(f"target is not a git checkout: {path}")
+    origin = _git(root, "config", "--get", "remote.origin.url").stdout.strip()
+    clone = profile.clone.resolve()
+    same = common_dir(root) == common_dir(clone) if clone.is_dir() else False
+    if not same and origin != profile.remote and Path(origin).resolve() != clone:
+        raise CannotRun(f"target is not a checkout of {profile.name}: {root}")
     sha = _git(root, "rev-parse", "--short", "HEAD")
     commit = sha.stdout.strip() if sha.returncode == 0 else "(no commits)"
     ref = _git(root, "symbolic-ref", "--short", "-q", "HEAD")
@@ -194,8 +212,10 @@ def run_gate(gate: Gate, root: Path, env: dict[str, str], baseline: bool) -> Res
         verdict = "PASS"
         if baseline:
             verdict += " (listed in baseline_failing; remove it from the profile)"
-    elif baseline:
+    elif result.warned:
         verdict = f"FAIL (exit {code}), baseline: warning only"
+    elif baseline:
+        verdict = f"FAIL (exit {code}), not the baseline failure (exit 1)"
     else:
         verdict = f"FAIL (exit {code})"
     print(f"<-- {gate.name}: {verdict} in {seconds:.1f}s", flush=True)
@@ -203,8 +223,8 @@ def run_gate(gate: Gate, root: Path, env: dict[str, str], baseline: bool) -> Res
 
 
 def summarize(kind: str, results: list[Result], skipped: list[str]) -> int:
-    failed = [r.gate.name for r in results if not r.passed and not r.baseline]
-    warned = [r.gate.name for r in results if not r.passed and r.baseline]
+    failed = [r.gate.name for r in results if not r.passed and not r.warned]
+    warned = [r.gate.name for r in results if not r.passed and r.warned]
     total = sum(r.seconds for r in results)
     parts = [f"{len(results)} ran", f"{len(results) - len(failed) - len(warned)} passed"]
     if failed:
@@ -226,7 +246,7 @@ def run(argv: list[str], cwd: Path | None = None) -> int:
         if not profile_path.is_absolute():
             profile_path = cwd / profile_path
         profile = load_profile(profile_path)
-        target = describe_target(resolve_target(args.target, profile, cwd))
+        target = describe_target(resolve_target(args.target, profile, cwd), profile)
         print(target.header(), flush=True)
         print(f"profile: {profile.path}  gates: {args.kind}")
         plan = plan_gates(profile, args.kind, args.skip)

@@ -412,3 +412,24 @@ def test_interrupted_review_stops_codex_and_records_nothing(
         time.sleep(0.05)
     assert not alive(sleeper)
     assert not (cr.store(clone) / f"{cr.tree(clone)}.json").exists()
+
+
+def test_changed_context_or_repository_is_reviewed_again(
+    root: Path, provider: list[str], tmp_path: Path
+) -> None:
+    clone = root / "shop/repo"
+    task = tmp_path / "task.md"
+    task.write_text("Value must be 2")
+    stage(clone, 2)
+    cr.review_staged(clone, [task])
+    cr.review_staged(clone, [task])
+    assert len(provider) == 1  # Same content and context: reused.
+    task.write_text("Value must be 5")
+    cr.review_staged(clone, [task])
+    assert len(provider) == 2 and "Value must be 5" in provider[-1]
+    cr.review_plan(root, "Add a test")
+    cr.review_plan(root, "Add a test")
+    assert len(provider) == 3
+    cr.git(clone, "commit", "-m", "advance")
+    cr.review_plan(root, "Add a test")
+    assert len(provider) == 4  # The code the plan was checked against moved.

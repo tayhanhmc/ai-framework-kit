@@ -95,7 +95,8 @@ The full verifier needs step 7's files, so it runs in step 9.
 Run each gate on the default branch with `check_code.py`. If a gate fails, rerun it in a
 clone outside the framework (`mktemp -d`):
 - If it passes there, the framework's layout causes the failure: fix the pinning.
-- If it fails in both, ask: must pass, or `baseline_failing`.
+- If it fails in both, ask: must pass, or `baseline_failing` (which tolerates only
+  exit 1, never a crash or usage error).
 
 Record each gate's result and its run time.
 
