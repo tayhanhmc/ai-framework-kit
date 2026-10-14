@@ -533,6 +533,8 @@ def main(argv: list[str] | None = None) -> int:
         else:
             receipt = review_staged(args.target, args.context, feedback, args.model)
         print(describe(receipt))
+        if receipt.get("error"):
+            return 2
         return 0 if receipt.get("approved") else 1
     except Interrupted as exc:
         print(f"BLOCKED: {exc}", file=sys.stderr)

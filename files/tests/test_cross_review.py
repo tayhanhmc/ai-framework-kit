@@ -181,6 +181,7 @@ def test_codex_failure_never_passes_and_is_retried(
         monkeypatch.setattr(cr, "codex", broken)
         receipt = cr.review_staged(clone, [], feedback="Please recheck")
         assert not receipt["approved"] and not cr.approved(clone)  # Old approval revoked.
+    assert cr.main(["review", "--target", str(clone)]) == 2  # Could not run, not blocked.
     monkeypatch.setattr(cr, "codex", reviewer)
     stage(clone, 3)
     calls = len(provider)

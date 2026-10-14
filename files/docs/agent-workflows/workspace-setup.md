@@ -242,7 +242,8 @@ note it.
    `git add -A`). Push only when asked. The Codex checkpoint reviews it like any
    commit; on a first setup that is the whole kit. Fix findings in files this setup
    wrote. Findings in kit files copied unchanged go to the user, who decides whether to
-   commit by hand or fix the kit first.
+   commit by hand or fix the kit first. Until then, unstage the framework files
+   (`git reset`): a staged, unreviewed index denies every agent commit, product ones too.
 5. Report:
    - what was built;
    - the verification evidence;
