@@ -6,6 +6,7 @@ import signal
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 import unittest
 import urllib.error
@@ -37,23 +38,27 @@ class HiddenServiceTest(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.port = _free_port()
         env = dict(os.environ, PORT=str(cls.port))
+        cls.log = tempfile.TemporaryFile()  # The service's output, for a failure message.
         cls.proc = subprocess.Popen(
             [sys.executable, "-m", "app.server"], env=env, start_new_session=True,
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            stdout=cls.log, stderr=subprocess.STDOUT,
         )
         record = os.environ.get("EVAL_RUNTIME_RECORD")
         if record:
             Path(record).write_text(json.dumps({"pid": cls.proc.pid, "port": cls.port}))
-        deadline = time.monotonic() + 10
+        deadline = time.monotonic() + 30  # Cold interpreter starts on CI runners are slow.
         while True:
             try:
                 if _request(f"http://127.0.0.1:{cls.port}/health")[0] == 200:
                     return
-            except OSError:
+            except (OSError, ValueError):
                 pass
             if cls.proc.poll() is not None or time.monotonic() > deadline:
+                code = cls.proc.poll()
+                cls.log.seek(0)
+                output = cls.log.read().decode(errors="replace")[-2000:]
                 cls.tearDownClass()
-                raise RuntimeError("service did not become ready")
+                raise RuntimeError(f"service did not become ready (exit {code}): {output}")
             time.sleep(0.05)
 
     @classmethod
@@ -65,6 +70,7 @@ class HiddenServiceTest(unittest.TestCase):
             except subprocess.TimeoutExpired:
                 os.killpg(cls.proc.pid, signal.SIGKILL)
                 cls.proc.wait()
+        cls.log.close()
 
     def url(self, path: str) -> str:
         return f"http://127.0.0.1:{self.port}{path}"
