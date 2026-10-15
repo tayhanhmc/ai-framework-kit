@@ -47,18 +47,24 @@ class HiddenServiceTest(unittest.TestCase):
         if record:
             Path(record).write_text(json.dumps({"pid": cls.proc.pid, "port": cls.port}))
         deadline = time.monotonic() + 30  # Cold interpreter starts on CI runners are slow.
+        last: object = None
         while True:
             try:
-                if _request(f"http://127.0.0.1:{cls.port}/health")[0] == 200:
+                status = _request(f"http://127.0.0.1:{cls.port}/health")[0]
+                if status == 200:
                     return
-            except (OSError, ValueError):
-                pass
+                last = f"HTTP {status}"
+            except (OSError, ValueError) as err:
+                last = repr(err)
             if cls.proc.poll() is not None or time.monotonic() > deadline:
                 code = cls.proc.poll()
                 cls.log.seek(0)
                 output = cls.log.read().decode(errors="replace")[-2000:]
                 cls.tearDownClass()
-                raise RuntimeError(f"service did not become ready (exit {code}): {output}")
+                raise RuntimeError(
+                    f"service did not become ready (exit {code}, last {last}, proxies"
+                    f" {urllib.request.getproxies()}): {output}"
+                )
             time.sleep(0.05)
 
     @classmethod
