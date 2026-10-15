@@ -178,6 +178,17 @@ def test_product_env_drops_only_the_framework_environment(
     assert wp.product_env()["UV_PROJECT_ENVIRONMENT"] == ".venv-product"
 
 
+def test_product_env_drops_a_windows_environment_s_scripts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    running = tmp_path / "fw-venv"
+    monkeypatch.setattr(sys, "prefix", str(running))
+    monkeypatch.setattr(wp, "VENV_BIN", "Scripts")
+    monkeypatch.delenv("VIRTUAL_ENV", raising=False)
+    monkeypatch.setenv("PATH", os.pathsep.join([str(running / "Scripts"), "/usr/bin"]))
+    assert wp.product_env()["PATH"] == "/usr/bin"
+
+
 def test_product_env_outside_a_venv_keeps_path(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(sys, "prefix", sys.base_prefix)
     monkeypatch.delenv("VIRTUAL_ENV", raising=False)

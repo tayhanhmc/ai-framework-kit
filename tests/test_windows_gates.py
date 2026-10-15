@@ -7,6 +7,7 @@ timeout or interruption stops the gate's process tree with `taskkill /T /F`.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import time
@@ -15,7 +16,10 @@ from pathlib import Path
 import pytest
 
 if sys.platform != "win32":
-    pytest.skip("Windows behaviour; covered by the kit's Windows CI job", allow_module_level=True)
+    pytest.skip(
+        "Windows behaviour; covered by the kit's Windows CI job",
+        allow_module_level=True,
+    )
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "files" / "ai" / "scripts"))
 
@@ -59,6 +63,18 @@ def test_scripts_import_on_windows() -> None:
     import garden  # noqa: F401
     import verify_agent_env  # noqa: F401
     import workspace_profile  # noqa: F401
+
+
+def test_framework_environment_is_off_the_product_path() -> None:
+    import workspace_profile
+
+    scripts = os.path.normcase(Path(sys.prefix).resolve() / "Scripts")
+    on_path = [
+        os.path.normcase(Path(p).resolve()) for p in os.environ["PATH"].split(os.pathsep) if p
+    ]
+    assert scripts in on_path  # uv run puts the running environment's Scripts first.
+    product = workspace_profile.product_env()["PATH"].split(os.pathsep)
+    assert scripts not in [os.path.normcase(Path(p).resolve()) for p in product if p]
 
 
 def test_pass_fail_and_timeout(tmp_path: Path) -> None:
