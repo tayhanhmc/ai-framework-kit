@@ -19,8 +19,8 @@ for `onFailure: block`.
    committed or reviewed. `--commit <rev>` reviews an existing commit the same way.
 2. **Plan.** When Claude leaves plan mode, the `ExitPlanMode` hook sends the plan to
    Codex with a snapshot of the checkouts it concerns (the framework and, from a
-   workspace, that workspace's clone and lanes): each HEAD plus its staged, unstaged and
-   untracked work, frozen as a Git tree. Blocking findings deny it and return to Claude;
+   workspace, that workspace's clone and lanes): each HEAD, its staged tree, and a tree
+   of all its staged, unstaged and untracked work. Blocking findings deny it and return to Claude;
    the same plan submitted again against the same snapshot goes to the user to decide.
    Outside plan mode, review a written plan with
    `cross_review.py review --target . --plan ai/plans/<name>.md`. <!-- garden: ignore -->
@@ -72,7 +72,8 @@ Only Claude's commits are checked. Human commits, merges in a terminal and other
 are not. This is a workflow guard, not a security boundary: a script that commits
 indirectly, a Git alias (`git ci`) or a quoted subcommand (`git c""ommit`) is not seen by
 the gate; the landing range check still lists such commits. Plan snapshots skip
-ignored files and files marked skip-worktree or assume-unchanged. Use server-side branch
+ignored files, files marked skip-worktree or assume-unchanged, and untracked files that
+look like secrets (the deny rules' patterns), which are never written into Git. Use server-side branch
 checks if remote enforcement is needed.
 
 ## Receipts and limits
@@ -83,7 +84,9 @@ configured Codex service; never pass secrets as context. Codex runs with a read-
 sandbox, no approvals, hooks or sub-agents, `--ephemeral`, and a 300 s timeout; one
 review runs per repository at a time. Editing during a review is safe: the review
 covers the snapshot it started with. A plan snapshot writes Git objects (as
-`git stash create` would) through a temporary index; the real index is untouched.
+`git stash create` would) through a temporary index; the real index is untouched. An
+interrupted review, like a failed one, never approves and revokes an earlier approval of
+the same content.
 
 ## References
 

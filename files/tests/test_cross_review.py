@@ -7,6 +7,7 @@ import json
 import os
 import re
 import signal
+import subprocess
 import sys
 import threading
 import time
@@ -772,3 +773,69 @@ def test_merge_rewritten_by_a_hook_fails_the_range_check(root: Path, provider: l
     (hooks / "pre-commit").unlink()
     assert cr.main(["check", "--target", str(clone), "--range", f"{base}..HEAD"]) == 1
     assert cr.main(["review", "--target", str(clone), "--commit", "HEAD"]) == 1  # Sees value 3.
+
+
+def test_plan_snapshot_never_writes_untracked_secrets(root: Path, provider: list[str]) -> None:
+    secret = b"API_KEY=synthetic-not-a-real-key\n"
+    (root / "shop/.env").write_bytes(secret)
+    (root / "id_rsa_backup").write_bytes(secret + b"x")
+    tree_id = cr.snapshot(root)
+    listed = cr.out(root, "ls-tree", "-r", "--name-only", tree_id)
+    assert ".env" not in listed and "id_rsa" not in listed
+    for data in (secret, secret + b"x"):  # Not in the object store at all.
+        blob = (
+            subprocess.run(
+                ["git", "-C", str(root), "hash-object", "--stdin"], input=data, capture_output=True
+            )
+            .stdout.decode()
+            .strip()
+        )
+        assert cr.git(root, "cat-file", "-e", blob, ok=(0, 1, 128)).returncode != 0
+
+
+def test_plan_review_sees_index_only_changes(root: Path, provider: list[str]) -> None:
+    clone = root / "shop/repo"
+    cr.review_plan(root / "shop", "Add a test")
+    stage(clone, 7)
+    (clone / "code.py").write_text("value = 1\n")  # Working copy back to HEAD, index changed.
+    cr.review_plan(root / "shop", "Add a test")
+    assert len(provider) == 2
+
+
+def test_interrupted_re_review_revokes_the_old_approval(
+    root: Path, provider: list[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    clone = root / "shop/repo"
+    stage(clone, 2)
+    assert cr.review_staged(clone, [])["approved"] and cr.approved(clone)
+
+    def interrupted(*_args: Any) -> dict[str, Any]:
+        raise cr.Interrupted(signal.SIGTERM)
+
+    monkeypatch.setattr(cr, "codex", interrupted)
+    with pytest.raises(cr.Interrupted):
+        cr.review_staged(clone, [], force=True)
+    assert not cr.approved(clone)
+
+
+def test_context_is_read_once_for_prompt_and_receipt(
+    root: Path, provider: list[str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    task = tmp_path / "task.md"
+    task.write_text("Value must be 2")
+    reads: list[Path] = []
+    original = Path.read_bytes
+
+    def counting(self: Path) -> bytes:
+        data = original(self)
+        if self == task:
+            reads.append(self)
+            self.write_text("Value must be 5")  # Changes right after this read.
+        return data
+
+    monkeypatch.setattr(Path, "read_bytes", counting)
+    stage(root / "shop/repo", 2)
+    receipt = cr.review_staged(root / "shop/repo", [task])
+    monkeypatch.setattr(Path, "read_bytes", original)
+    assert len(reads) == 1 and "Value must be 2" in provider[-1]
+    assert receipt["context"][0]["sha256"] == cr.sha256(b"Value must be 2")

@@ -65,6 +65,8 @@ POLICY = "2026-10-14"
 # Public Git empty-tree object ID, not a credential: the parent of a first commit.
 EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"  # pragma: allowlist secret
 SIGNALS = (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
+# Likely secrets, as in the deny rules; plan snapshots never write these into Git.
+SECRET_PATHS = (".env", ".env.*", "*.pem", "*.p12", "id_rsa*", ".npmrc", ".pypirc", "secrets/**")
 SCHEMA = {
     "type": "object",
     "additionalProperties": False,
@@ -191,23 +193,36 @@ def snapshot(target: Path) -> str:
     """HEAD plus every staged, unstaged and untracked (not ignored) change, as a tree.
 
     Built in a copy of the index, so the real index is untouched and unchanged files keep
-    their cached stat data."""
+    their cached stat data. Untracked files that look like secrets (the deny rules'
+    patterns) are left out, so they are never written into the object store."""
     index = Path(out(target, "rev-parse", "--path-format=absolute", "--git-path", "index"))
+    excludes = [f":(exclude,glob)**/{pattern}" for pattern in SECRET_PATHS]
     with tempfile.TemporaryDirectory() as folder:
         scratch = Path(folder) / "index"
         if index.is_file():
             shutil.copyfile(index, scratch)
         env = {**os.environ, "GIT_INDEX_FILE": str(scratch)}
-        git(target, "add", "-A", env=env)
+        git(target, "add", "-A", "--", ".", *excludes, env=env)
         return git(target, "write-tree", env=env).stdout.decode().strip()
+
+
+def staged_tree(target: Path) -> str:
+    """The real index as a tree, or "unmerged" while conflicts are unresolved."""
+    found = git(target, "write-tree", ok=(0, 128)).stdout.decode().strip()
+    return found or "unmerged"
 
 
 def sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def fingerprints(paths: list[Path]) -> list[dict[str, str]]:
-    return [{"path": str(p.resolve()), "sha256": sha256(p.read_bytes())} for p in paths]
+def read_context(paths: list[Path]) -> tuple[str, list[dict[str, str]]]:
+    """The context material for the prompt and the fingerprint of each file, from a single
+    read, so the receipt records exactly what the reviewer was given."""
+    contents = [(path, path.read_bytes()) for path in paths]
+    material = "\n\n".join(f"FILE {path}\n{data.decode()}" for path, data in contents)
+    prints = [{"path": str(path.resolve()), "sha256": sha256(data)} for path, data in contents]
+    return material, prints
 
 
 def stale_context(receipt: dict[str, Any]) -> str | None:
@@ -350,7 +365,7 @@ def run_review(
     feedback: str,
     model: str | None,
     *,
-    context: list[Path] | None = None,
+    context: list[dict[str, str]] | None = None,
     force: bool = False,
 ) -> dict[str, Any]:
     """Review once per key and identity; a current result is reused unless forced or
@@ -374,17 +389,22 @@ def run_review(
             "policy": POLICY,
             "model": model or "codex default",
             "reviewed_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
-            "context": fingerprints(context or []),
+            "context": context or [],
             "run": str(run),
         }
+
+        def failed(error: str) -> dict[str, Any]:
+            # Keep the last completed findings; a failed attempt never approves.
+            found = {"key": key, "approved": False, "error": error, **provenance, "digest": ""}
+            return {**found, "result": prior} if prior else found
+
         try:
             result = codex(target, run, prompt, model)
         except (ReviewError, OSError, ValueError) as exc:
-            # Keep the last completed findings; a failed attempt never approves.
-            receipt = {"key": key, "approved": False, "error": str(exc), **provenance}
-            receipt["digest"] = ""  # Retried on the next run.
-            if prior:
-                receipt["result"] = prior
+            receipt = failed(str(exc))  # Retried on the next run.
+        except Interrupted as exc:
+            write_json(receipt_path, failed(str(exc)))  # An interrupted re-review revokes too.
+            raise
         else:
             receipt = {"key": key, "approved": validate_result(result), "result": result}
             receipt.update(provenance, digest=digest)
@@ -402,7 +422,7 @@ def review_change(
     force: bool = False,
 ) -> dict[str, Any]:
     """Review the change from `parent` to `new_tree`, frozen Git objects in `target`."""
-    material = "\n\n".join(f"FILE {path}\n{path.read_text()}" for path in context)
+    material, prints = read_context(context)
     task = (
         f"Review a commit in {target}: exactly the change "
         f"`git diff {parent} {new_tree}`. Read its files with "
@@ -412,7 +432,7 @@ def review_change(
     )
     key = commit_key(parent, new_tree)
     return run_review(
-        target, key, task, f"ARTIFACTS\n{material}", feedback, model, context=context, force=force
+        target, key, task, f"ARTIFACTS\n{material}", feedback, model, context=prints, force=force
     )
 
 
@@ -446,13 +466,14 @@ def plan_request(root: Path, start: Path, plan: str) -> tuple[str, str, str]:
     the framework and the checkouts of the workspace it concerns (all, from the root)."""
     states = []
     for path in plan_checkouts(root, start):
-        states.append(f"{os.path.relpath(path, root)}@{head(path) or '-'} ({snapshot(path)})")
+        rel, state = os.path.relpath(path, root), f"index {staged_tree(path)}, all {snapshot(path)}"
+        states.append(f"{rel}@{head(path) or '-'} ({state})")
     task = (
         f"Review this plan before implementation, against the real code under {root}"
-        f" (checkout@HEAD (working-tree snapshot): {', '.join(states)}), its constraints and"
-        " simpler alternatives. Each snapshot is a frozen tree of the checkout including"
-        " uncommitted work: `git diff <HEAD> <snapshot>` shows that work, and"
-        " `git show <snapshot>:<path>` reads a file."
+        f" (checkout@HEAD (index tree, all-changes tree): {', '.join(states)}), its"
+        " constraints and simpler alternatives. Each tree is frozen: `index` is what is"
+        " staged, `all` adds unstaged and untracked work (likely secrets left out);"
+        " `git diff <HEAD> <tree>` shows the work and `git show <tree>:<path>` reads a file."
     )
     return "plan-" + sha256(plan.encode()), task, f"PLAN\n{plan}"
 
