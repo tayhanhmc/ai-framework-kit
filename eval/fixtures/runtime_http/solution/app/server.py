@@ -2,6 +2,7 @@
 
 import json
 import os
+import socketserver
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -53,8 +54,16 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
 
+class Server(ThreadingHTTPServer):
+    def server_bind(self) -> None:
+        # HTTPServer.server_bind does a reverse-DNS lookup (socket.getfqdn), which can
+        # hang for a long time on some hosts; a local test service needs no name.
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = "127.0.0.1", self.server_address[1]
+
+
 def main() -> None:
-    server = ThreadingHTTPServer(("127.0.0.1", int(os.environ["PORT"])), Handler)
+    server = Server(("127.0.0.1", int(os.environ["PORT"])), Handler)
     server.serve_forever()
 
 
