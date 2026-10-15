@@ -19,7 +19,9 @@ Contract:
       On a timeout, or when this script gets SIGINT, SIGTERM or SIGHUP, the whole group is
       terminated (SIGTERM, then SIGKILL after a grace period); whatever a gate leaves
       running in its group when it exits is terminated the same way. A daemon that
-      starts its own session (`setsid`) is out of reach.
+      starts its own session (`setsid`) is out of reach. On Windows a timeout or
+      interruption stops the gate's process tree with `taskkill /T /F` (no grace period),
+      and children a gate leaves behind after exiting normally are not reached.
     - `--skip NAME` is the only way to leave a gate out; every skip is printed. An unknown
       name is an error, so a typo cannot pass silently.
     - A gate listed in the profile's `baseline_failing` that fails with exit 1 makes the run
@@ -50,6 +52,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from types import FrameType
+from typing import Any
 
 from workspace_profile import (
     PROFILE_NAME,
@@ -62,7 +65,10 @@ from workspace_profile import (
     workspace_for,
 )
 
-STOP_SIGNALS = (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
+WINDOWS = sys.platform == "win32"
+STOP_SIGNALS = tuple(
+    getattr(signal, name) for name in ("SIGINT", "SIGTERM", "SIGHUP") if hasattr(signal, name)
+)
 EXIT_PASS, EXIT_FAIL, EXIT_CANNOT_RUN, EXIT_DEGRADED = 0, 1, 2, 3
 GRACE_SECONDS = 5.0
 
@@ -235,8 +241,21 @@ def group_alive(proc: subprocess.Popen[bytes]) -> bool:
     return True
 
 
+def stop_tree(proc: subprocess.Popen[bytes]) -> None:
+    """Windows: stop the gate and every process it started (`taskkill /T /F`), then reap it."""
+    subprocess.run(
+        ["taskkill", "/T", "/F", "/PID", str(proc.pid)], capture_output=True, check=False
+    )
+    if proc.poll() is None:
+        proc.kill()
+    proc.wait()
+
+
 def stop_group(proc: subprocess.Popen[bytes]) -> None:
     """Terminate what is left of the gate's process group, then reap the gate."""
+    if WINDOWS:
+        stop_tree(proc)
+        return
     blocked = set(STOP_SIGNALS)
     signal.pthread_sigmask(signal.SIG_BLOCK, blocked)
     try:
@@ -263,9 +282,12 @@ def run_gate(gate: Gate, root: Path, env: dict[str, str], tool: str, baseline: b
     print(f"==> {gate.name}: {' '.join(gate.argv)}", flush=True)
     start = time.monotonic()
     try:
-        proc = subprocess.Popen(
-            list(gate.argv), executable=tool, cwd=root, env=env, start_new_session=True
+        group: dict[str, Any] = (
+            {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}  # type: ignore[attr-defined]
+            if WINDOWS
+            else {"start_new_session": True}
         )
+        proc = subprocess.Popen(list(gate.argv), executable=tool, cwd=root, env=env, **group)
     except OSError as exc:
         raise CannotRun(f"gate {gate.name} did not run: {exc}") from exc
     code: int | None = None
