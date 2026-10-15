@@ -102,7 +102,19 @@ def test_invalid_profiles(tmp_path: Path, body: str, message: str) -> None:
         wp.load_profile(write_profile(tmp_path, body))
 
 
-@pytest.mark.parametrize("clone", ["/abs/repo", "../repo", "a/../../b", ".."])
+WINDOWS_ONLY = pytest.mark.skipif(sys.platform != "win32", reason="a drive is Windows syntax")
+
+
+@pytest.mark.parametrize(
+    "clone",
+    [
+        "/abs/repo",
+        "../repo",
+        "a/../../b",
+        "..",
+        *(pytest.param(c, marks=WINDOWS_ONLY) for c in ("C:repo", "C:/repo")),
+    ],
+)
 def test_clone_must_stay_inside_workspace(tmp_path: Path, clone: str) -> None:
     with pytest.raises(wp.ProfileError, match="`clone` must be a relative path"):
         wp.load_profile(write_profile(tmp_path, BASE + f"clone = {clone!r}\n"))
@@ -167,12 +179,13 @@ def test_product_env_drops_only_the_framework_environment(
 ) -> None:
     running, active, user = tmp_path / "fw-venv", tmp_path / "active", tmp_path / "user"
     monkeypatch.setattr(sys, "prefix", str(running))
-    path = [str(running / "bin"), str(user / "bin"), str(active / "bin"), "", "/usr/bin"]
+    bin_ = wp.VENV_BIN
+    path = [str(running / bin_), str(user / bin_), str(active / bin_), "", "/usr/bin"]
     monkeypatch.setenv("PATH", os.pathsep.join(path))
     monkeypatch.setenv("VIRTUAL_ENV", str(active))
     monkeypatch.setenv("UV_PROJECT_ENVIRONMENT", str(running))
     env = wp.product_env()
-    assert env["PATH"] == os.pathsep.join([str(user / "bin"), "", "/usr/bin"])
+    assert env["PATH"] == os.pathsep.join([str(user / bin_), "", "/usr/bin"])
     assert "VIRTUAL_ENV" not in env and "UV_PROJECT_ENVIRONMENT" not in env
     monkeypatch.setenv("UV_PROJECT_ENVIRONMENT", ".venv-product")
     assert wp.product_env()["UV_PROJECT_ENVIRONMENT"] == ".venv-product"

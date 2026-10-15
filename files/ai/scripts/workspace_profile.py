@@ -206,7 +206,7 @@ def load_profile(path: Path) -> Profile:
     test = _gates(data, "test", where, workspace, taken)
     baseline = _str_list(data, "baseline_failing", where)
     clone = Path(_str(data, "clone", where, "repo"))
-    if clone.is_absolute() or ".." in clone.parts:
+    if clone.anchor or ".." in clone.parts:  # anchor: also Windows-rooted `/x` and `C:x`
         raise ProfileError(f"{where}: `clone` must be a relative path without `..`: {clone}")
     for gate in baseline:
         if gate not in taken:
