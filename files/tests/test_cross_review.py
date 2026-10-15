@@ -839,3 +839,17 @@ def test_context_is_read_once_for_prompt_and_receipt(
     monkeypatch.setattr(Path, "read_bytes", original)
     assert len(reads) == 1 and "Value must be 2" in provider[-1]
     assert receipt["context"][0]["sha256"] == cr.sha256(b"Value must be 2")
+
+
+def test_plan_review_uses_and_binds_context(
+    root: Path, provider: list[str], tmp_path: Path
+) -> None:
+    task = tmp_path / "requirements.md"
+    task.write_text("Plans must keep value at 2")
+    plan = tmp_path / "plan.md"
+    plan.write_text("Add a test")
+    args = ["review", "--target", str(root), "--plan", str(plan), "--context", str(task)]
+    assert cr.main(args) == 0 and "Plans must keep value at 2" in provider[-1]
+    assert cr.main(args) == 0 and len(provider) == 1  # Same plan and context: reused.
+    task.write_text("Plans must keep value at 3")
+    assert cr.main(args) == 0 and len(provider) == 2  # Changed requirements: reviewed again.

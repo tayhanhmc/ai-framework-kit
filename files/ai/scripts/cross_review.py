@@ -484,11 +484,15 @@ def review_plan(
     feedback: str = "",
     model: str | None = None,
     force: bool = False,
+    context: list[Path] | None = None,
 ) -> dict[str, Any]:
     start = root.resolve()
     root = framework_root(start)
     key, task, material = plan_request(root, start, plan)
-    return run_review(root, key, task, material, feedback, model, force=force)
+    extra, prints = read_context(context or [])
+    if extra:
+        material += f"\n\nARTIFACTS\n{extra}"
+    return run_review(root, key, task, material, feedback, model, context=prints, force=force)
 
 
 def approval_problem(
@@ -873,7 +877,7 @@ def main(argv: list[str] | None = None) -> int:
         feedback = args.feedback.read_text() if args.feedback else ""
         common = (feedback, args.model, args.force)
         if args.plan:
-            receipt = review_plan(args.target, args.plan.read_text(), *common)
+            receipt = review_plan(args.target, args.plan.read_text(), *common, args.context)
         elif args.commit:
             receipt = review_commit(args.target, args.commit, args.context, *common)
         else:
