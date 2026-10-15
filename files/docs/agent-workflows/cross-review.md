@@ -1,13 +1,14 @@
 # Cross-model review
 
 Claude implements; a fresh Codex process reviews, so a second model family checks every
-commit Claude makes and every plan it leaves plan mode with. It uses the existing Codex
-login and configured model (or `--model`). macOS and Linux; Claude Code 2.1.295 or later
-for `onFailure: block`.
+commit before it lands and every plan Claude leaves plan mode with. It uses the existing
+Codex login and configured model (or `--model`). macOS and Linux; Claude Code 2.1.295 or
+later for `onFailure: block`.
 
 ## The two checkpoints
 
-1. **Commit.** Stage exactly the intended commit, then from the framework root run:
+1. **Commit.** Claude commits freely. To review before committing, stage exactly the
+   intended commit, then from the framework root run:
 
    ```sh
    uv run --locked python ai/scripts/cross_review.py review --target shop/repo --context ai/tasks/checkout.md # garden: ignore
@@ -25,8 +26,9 @@ for `onFailure: block`.
    Outside plan mode, review a written plan with
    `cross_review.py review --target . --plan ai/plans/<name>.md`. <!-- garden: ignore -->
 3. **Landing.** Before work lands (a push to the default branch or a PR), run
-   `cross_review.py check --target <lane> --range <base>..HEAD`: every commit (a merge
-   against its first parent) must have a current passing receipt. <!-- garden: ignore -->
+   `cross_review.py check --target <lane> --range <base>..HEAD`: it lists every commit
+   (a merge against its first parent) without a current passing receipt. Review each
+   with `review --target <lane> --commit <sha>`, fix, re-review, then land. <!-- garden: ignore -->
 
 P0/P1/P2 findings block; P3 is advisory. An incomplete review, timeout or invalid output
 never passes; an error is retried on the next run. A result is reused, and an approval
@@ -36,45 +38,32 @@ policy version (`POLICY` in the script). A changed or deleted context file revok
 approval of staged work, so pass requirement files as context, not a task file whose
 progress you will edit before committing. A landed commit keeps its review: the range
 check does not re-judge it against later context. An amend that changes content needs
-`review --commit HEAD` afterwards (the hook says so); a message-only amend keeps its
-review. `--force` reviews again regardless. Receipts record the model, policy,
-time and context digests. To dispute a finding, write the evidence to a file and pass
-`--feedback <file>`: Codex sees its earlier findings and the response, and reviews again.
-Fix confirmed issues, restage and review. When Codex and Claude still disagree after a
-rebuttal, report the findings to the user.
+`review --commit HEAD` afterwards; a message-only amend keeps its review. `--force`
+reviews again regardless. Receipts record model, policy, time and context.
+
+## Acting on findings
+
+<!-- added 2026-10-14: fixing every finding grew changes past their task (Windows support built over five commits, then scoped out) -->
+
+Sort each blocking finding before changing code. Fix it with the smallest change when its
+failure is real and inside the task. Dispute it with evidence in a file passed as
+`--feedback <file>`: Codex rereviews with its earlier findings and your response. Take
+it to the user when fixing it would widen the task. After two review rounds, findings
+still blocking go to the user with your assessment, not into another fix. Leave P3
+findings unfixed unless the user asks.
 
 ## Enforcement
 
-The Claude `PreToolUse` hook on `Bash` denies a
-`git commit` when the checkout it commits in (resolved from the session folder, `cd` and
-`git -C`; only a literal `cd <dir>` and read-only Git may come before the commit) has
-staged changes without a current passing receipt; staged work in other
-checkouts does not block it. The denial names the review command. It allows only
-commits whose content it can check beforehand: `git [-C <dir>] commit` with message,
-author and amend options, optionally after `cd` or beside read-only Git commands
-(`status`, `log`, `show`, `diff`, `push`). It denies every other form that may commit:
-`-a`, `-p`, pathspecs, staging in the same command, wrappers (`bash -c`, `time`, `{ }`),
-command substitution, environment prefixes and other Git options. Stage in one command,
-review, then commit in another with `-m <message>` or `-F <file>`, not
-`-m "$(cat <<EOF ...)"`. A hook that cannot run denies. The hook's `if: Bash(*commit*)`
-filter is best-effort: Claude Code also runs it for commands it cannot parse or that use
-`$()` or `$VAR`, and the hook allows those when they run no commit.
+Nothing blocks a commit. The landing range check is the gate: it judges each commit by
+its first parent and tree, so content a Git hook restaged or a concurrent edit changed
+during the commit is listed like any unreviewed commit. The `PreToolUse` hook on
+`ExitPlanMode` enforces plan review; a hook that cannot run denies the plan.
 
-The gate checks the index before Git runs. Git then runs the repository's own hooks
-during the commit (`pre-commit`, `prepare-commit-msg`, ...), and those may restage files;
-another process may also change the index meanwhile. So the commit that lands is
-compared with the allowed tree afterwards: the `PostToolUse` and `PostToolUseFailure`
-hooks on `Bash` tell Claude when they differ, with the commands to inspect the difference
-and review the landed commit (`--commit HEAD`). The landing range check is the backstop
-when that message is missed. Product hooks stay as they are.
-
-Only Claude's commits are checked. Human commits, merges in a terminal and other tools
-are not. This is a workflow guard, not a security boundary: a script that commits
-indirectly, a Git alias (`git ci`) or a quoted subcommand (`git c""ommit`) is not seen by
-the gate; the landing range check still lists such commits. Plan snapshots skip
-ignored files, files marked skip-worktree or assume-unchanged, and untracked files that
-look like secrets (the deny rules' patterns), which are never written into Git. Use server-side branch
-checks if remote enforcement is needed.
+This is a workflow guard, not a security boundary: the range check runs when the landing
+workflow runs it. Plan snapshots skip ignored files, files marked skip-worktree or
+assume-unchanged, and untracked files that look like secrets (the deny rules' patterns),
+which are never written into Git. Use server-side branch checks if remote enforcement is
+needed.
 
 ## Receipts and limits
 

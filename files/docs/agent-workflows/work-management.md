@@ -1,7 +1,7 @@
 # Work management
 
 For work spanning sessions; single-session work needs none of this. Every commit passes
-the Codex review in `docs/agent-workflows/cross-review.md`.
+the Codex review in `docs/agent-workflows/cross-review.md` before it lands.
 
 ## Artifacts
 
@@ -39,8 +39,8 @@ are commands. The limits must be enforced outside the model:
 - Run `claude -p "<task file and plan path>" --max-budget-usd <n>` from the workspace,
   under a wall-clock limit (the CI job's timeout, or coreutils `timeout`, which macOS
   lacks by default). The deny
-  rules, hooks and commit review apply as in any session; nothing pushes, merges or
-  deploys. In `-p` the plan hook does not run and an `ask` becomes a deny, so plan first,
+  rules and hooks apply as in any session; nothing pushes, merges or deploys. Its commits
+  are reviewed at the pre-land range check like any others. In `-p` the plan hook does not run and an `ask` becomes a deny, so plan first,
   interactively.
 - `/goal` keeps an interactive session working until a condition holds, but a small
   model judges the condition from the transcript; it runs nothing and enforces no time
@@ -64,7 +64,7 @@ authoritative current state; use a fresh session when context quality warrants i
 
 1. Compare the result with the acceptance criteria and any applicable plan.
 2. Add decisions to `docs/dev/decisions.md` (or the workspace's) that pass its four tests.
-3. Propose `ai/project.md` additions.
+3. Propose `ai/project.md` additions the task discovered, if any.
 4. List the corrections the user had to repeat and propose one rule for each (propose
    only). An accepted rule gets `<!-- added YYYY-MM-DD: <failure> -->`.
 5. Move the artifacts to `ai/archive/<feature>/`.

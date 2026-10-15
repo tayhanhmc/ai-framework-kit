@@ -93,7 +93,7 @@ After this, ask only about a gate that fails on the default branch, and at step 
   - a test runner with one passing test;
   - CI running the same gates, with actions pinned by SHA.
 
-  Before committing, pass the Codex review in `docs/agent-workflows/cross-review.md`.
+  Before landing, pass the Codex review in `docs/agent-workflows/cross-review.md`.
   This is product code, owned by the repo.
 
 Then write `<product>/workspace.toml`:
@@ -207,9 +207,9 @@ Show each diff, and apply it only on the user's go-ahead.
 Record each result in the task file. Skip a probe for a tool that is not installed, and
 note it.
 
-1. **Commit review:** from a Claude session in the workspace, stage a scratch change
-   on a scratch branch of the product clone and ask for a commit: the hook must deny
-   it. After `cross_review.py review` passes, the same commit must go through. Delete
+1. **Commit review:** commit a scratch change on a scratch branch of the product clone:
+   `cross_review.py check --range main..HEAD` must list it. After
+   `cross_review.py review --commit HEAD` passes, the range check must exit 0. Delete
    the branch. The verifier exits 0, and `poe lint` and `poe test` pass.
 2. The gates give the results recorded in step 6.
 3. **Codex deny rules:** `codex execpolicy check --rules <file> -- <words>` gives
@@ -273,9 +273,7 @@ note it.
    commit; on a first setup that is the whole kit. Fix findings in files this setup
    wrote. Findings in kit files installed unchanged go to the user, who decides whether
    to commit by hand or fix the kit first. The commit includes `.kit-install.toml` and
-   `.secrets.baseline`; no `*.kit-conflict-*` file may remain. Until then, unstage the framework files
-   (`git reset`): a staged, unreviewed framework index denies every agent commit in
-   the framework.
+   `.secrets.baseline`; no `*.kit-conflict-*` file may remain.
 5. Report:
    - what was built;
    - the verification evidence;

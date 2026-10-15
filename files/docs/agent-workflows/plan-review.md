@@ -12,11 +12,12 @@ Scale planning and review by what could break, not by size. A one-line change to
 authorization, money, data deletion, migrations or a public contract can merit a full
 plan and review; a large mechanical edit (rename, formatting, generated code) may need
 none. Obvious, local, easily reverted changes skip the plan: make the change, run the
-gates, commit through the commit review.
+gates, commit; the commit is reviewed before it lands.
 
 ## A consequential plan holds
 
 <!-- added 2026-10-14: plans omitted boundaries, alternatives and rollback, so review had nothing to check them against -->
+<!-- changed 2026-10-15: plans and reviews demanded recovery for steps `git revert` already undoes -->
 
 Write "not applicable" for a section that does not apply; never pad one.
 
@@ -31,11 +32,11 @@ Write "not applicable" for a section that does not apply; never pad one.
 5. **Experiments:** small checks that settle an uncertain assumption (an API's real
    behaviour, a version's signature) before building on it.
 6. **Steps and acceptance:** ordered steps, each acceptance criterion tied to a command
-   or test that checks it, and how to recover or roll back.
+   or test that checks it; for a step `git revert` cannot undo (data, migrations,
+   external state), how to recover.
 
 For consequential or unfamiliar work, explore read-only first (a subagent keeps the
-search out of the main context), and ask for an independent critique that gets the
-requirements and evidence, not the conclusion.
+search out of the main context).
 
 ## Runtime acceptance (web and service products)
 
@@ -52,7 +53,7 @@ find problems; behaviour that matters again becomes a deterministic regression t
 2. Version mismatches.
 3. Values that look copied rather than checked.
 4. Steps that depend on outputs no earlier step produces.
-5. Partial failure and recovery.
+5. Steps that can leave data or state half-changed, and how that is undone.
 6. Criteria a machine cannot check.
 7. Simpler alternatives not evaluated.
 8. Shared helpers: anything two parallel lanes need is built once, first.
@@ -61,6 +62,6 @@ find problems; behaviour that matters again becomes a deterministic regression t
 
 ## Output
 
-Structured findings with evidence: P0/P1/P2 block, P3 is advisory. Verify findings,
-repair or rebut with evidence, and re-review within the bounded loop. A materially
+Structured findings with evidence: P0/P1/P2 block, P3 is advisory. Act on them as
+`docs/agent-workflows/cross-review.md` says under "Acting on findings". A materially
 changed plan needs a fresh review before implementation.

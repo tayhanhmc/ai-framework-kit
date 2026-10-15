@@ -8,8 +8,6 @@ owner, one at a time, and can be rolled back with Git.
 | Change | Effect on an existing framework | Action |
 |---|---|---|
 | Review receipts carry `POLICY`, model and context digests | Every receipt made before the upgrade stops counting; staged work must be reviewed again | Review once after upgrading |
-| Commit gate checks only the checkout being committed | Unrelated staged work in another lane no longer blocks a commit | None |
-| `PostToolUse`/`PostToolUseFailure` `Bash` hooks run `cross_review.py hook` | Claude is told when a Git hook or concurrent edit changed what it committed | The verifier requires both entries in `.claude/settings.json` and each workspace's |
 | `cross_review.py check --range` in the pre-land review | Commits without a current receipt (changed by a hook, or made by hand) are listed before landing | Review listed commits with `--commit <sha>` |
 | Plan reviews snapshot uncommitted work | A plan approved before dirty edits is reviewed again | None |
 | `check_code.py` exit 3 (DEGRADED) | A failing `baseline_failing` gate no longer passes with exit 0 | Prefer narrow deselection in the gate's argv; scripts that test `== 0` now treat it as not passed |
@@ -23,7 +21,9 @@ owner, one at a time, and can be rolled back with Git.
 | Garden reads only top-level names per ref at session start | Faster session start; same output | None |
 | Workflow docs: risk-based depth, authorized adjustments, optional unattended runs, stack-aware integrations | Fewer approval requests for routine changes | Review the changed rules with the team |
 | Comment rule in the root AGENTS.md `## Conventions`; root budget 3.5 KB | The commit review checks changed comments and docstrings against it (`POLICY` 2026-10-15.2: receipts are reviewed again) | Add the `## Conventions` comment bullet from `RECREATE_CODE_ENV_PROMPT.md`, before `## Etiquette` |
-| Framework scripts support macOS and Linux | They import on Windows and their tests skip there; the commit review no longer reports Windows-only behaviour in `ai/scripts` (product code is still reviewed for its own platforms) | None |
+| Reviews scoped to the task; unneeded complexity is a finding; two fix rounds, then the user decides (`POLICY` 2026-10-15.3) | Edge cases outside the task stop blocking; unrequested abstractions and defensive code start blocking; receipts are reviewed again | Review once after upgrading |
+| Framework scripts support macOS and Linux | Their Windows code is removed; the commit review no longer reports Windows-only behaviour in `ai/scripts` (product code is still reviewed for its own platforms) | None |
+| Commit gate removed | Claude's commits are not blocked; unreviewed commits are listed and reviewed at landing | Remove the `cross_review.py` `PreToolUse`/`PostToolUse`/`PostToolUseFailure` `Bash` entries from `.claude/settings.json` and each workspace's (the verifier no longer requires them); in the root AGENTS.md `## Verify your work`, replace the review sentence with the one in `RECREATE_CODE_ENV_PROMPT.md` |
 
 ## Procedure
 
@@ -42,16 +42,19 @@ owner, one at a time, and can be rolled back with Git.
 3. Rerun without `--dry-run` until it exits 0, then `uv lock`, `uv sync --locked`,
    `uv run --locked poe lint`, `uv run --locked poe test`, the verifier and
    `pre-commit run --all-files`.
-4. Copy the new `PostToolUse` and `PostToolUseFailure` entries into each workspace's
-   `.claude/settings.json` (with `${CLAUDE_PROJECT_DIR}/../`), and recheck each
-   `workspace.toml` against the table above.
+4. Apply the table's `.claude/settings.json` changes to each workspace's copy too (its
+   hooks use `${CLAUDE_PROJECT_DIR}/../`), and recheck each `workspace.toml` against
+   the table above.
 5. Rerun the step 9 probes in `docs/agent-workflows/workspace-setup.md`, or the kit's
    `probes/run_probes.py --live --framework <root>`.
-6. Commit through the commit review. Later updates are step 2 again; the installer then
-   three-way merges local edits against the recorded revision.
+6. Commit, then review each commit the landing range check lists. Later updates are
+   step 2 again; the installer then three-way merges local edits against the recorded
+   revision.
 
 ## Rollback
 
 Revert the upgrade commit (`git revert <sha>`) and run `uv sync --locked`. The old
-scripts' commit gate accepts approvals the new ones wrote (same key and `approved`
-field), but their `review` command does not reuse those results and calls Codex again. Delete `.kit-install.toml` only if returning to manual copying.
+scripts' commit gate returns with the old settings: it denies Claude's next commit until
+the staged work is reviewed. It accepts approvals the new scripts wrote (same key and
+`approved` field), but their `review` command does not reuse those results and calls
+Codex again. Delete `.kit-install.toml` only if returning to manual copying.

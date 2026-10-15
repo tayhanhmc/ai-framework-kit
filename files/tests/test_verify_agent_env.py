@@ -69,15 +69,8 @@ def claude_settings(prefix: str) -> str:
 
     hooks = {
         "SessionStart": [group("startup|resume|clear|compact", "garden.py", "--session")],
-        "PostToolUse": [
-            group("Edit|Write", "format_changed.py"),
-            group("Bash", "cross_review.py", "hook"),
-        ],
-        "PostToolUseFailure": [group("Bash", "cross_review.py", "hook")],
-        "PreToolUse": [
-            group("ExitPlanMode", "cross_review.py", "hook"),
-            group("Bash", "cross_review.py", "hook"),
-        ],
+        "PostToolUse": [group("Edit|Write", "format_changed.py")],
+        "PreToolUse": [group("ExitPlanMode", "cross_review.py", "hook")],
     }
     return json.dumps({"permissions": {"deny": ["Read(./**/.env)"]}, "hooks": hooks}, indent=2)
 
@@ -493,22 +486,20 @@ def test_hook_not_wired(fw: Path) -> None:
     assert_one(fw, ".codex/hooks.json", "hooks.SessionStart does not run garden.py --session")
 
 
-@pytest.mark.parametrize(("index", "matcher"), [(0, "ExitPlanMode"), (1, "Bash")])
-def test_review_hook_needs_hook_argument(fw: Path, index: int, matcher: str) -> None:
+def test_review_hook_needs_hook_argument(fw: Path) -> None:
     data = json.loads((fw / ".claude/settings.json").read_text())
-    for hook in data["hooks"]["PreToolUse"][index]["hooks"]:
+    for hook in data["hooks"]["PreToolUse"][0]["hooks"]:
         hook["args"] = [a for a in hook["args"] if a != "hook"] + ["status"]
     write(fw / ".claude/settings.json", json.dumps(data))
-    message = f"hooks.PreToolUse does not run cross_review.py hook with matcher {matcher!r}"
+    message = "hooks.PreToolUse does not run cross_review.py hook with matcher 'ExitPlanMode'"
     assert_one(fw, ".claude/settings.json", message)
 
 
-@pytest.mark.parametrize(("index", "matcher"), [(0, "ExitPlanMode"), (1, "Bash")])
-def test_review_hook_needs_its_matcher(fw: Path, index: int, matcher: str) -> None:
+def test_review_hook_needs_its_matcher(fw: Path) -> None:
     data = json.loads((fw / ".claude/settings.json").read_text())
-    data["hooks"]["PreToolUse"][index]["matcher"] = "Edit"
+    data["hooks"]["PreToolUse"][0]["matcher"] = "Edit"
     write(fw / ".claude/settings.json", json.dumps(data))
-    message = f"hooks.PreToolUse does not run cross_review.py hook with matcher {matcher!r}"
+    message = "hooks.PreToolUse does not run cross_review.py hook with matcher 'ExitPlanMode'"
     assert_one(fw, ".claude/settings.json", message)
 
 

@@ -192,19 +192,20 @@ local edits; steps 1 and 3 only report differences.
    `uv run --locked poe lint` and `uv run --locked poe test`. Both must pass before
    anything else is written.
 4. Run `uv run --locked pre-commit install`. The Codex review needs no install: the
-   kit's `.claude/settings.json` hook enforces it (`docs/agent-workflows/cross-review.md`).
+   kit's `.claude/settings.json` hook enforces plan review, and the pre-land range check
+   lists unreviewed commits (`docs/agent-workflows/cross-review.md`).
 
 What the kit holds, and the failure each part prevents:
 
 | Part | Size | Prevents |
 |---|---|---|
 | `install.py` (kit side) | 415 | kit fixes with no reliable path into an installed framework; local edits overwritten by an update |
-| `workspace_profile.py` | 278 | scripts reading `workspace.toml` differently |
+| `workspace_profile.py` | 281 | scripts reading `workspace.toml` differently |
 | `check_code.py lint\|test` | 361 | gates run in the wrong checkout or with the framework's tools, hung, skipped unseen, or a known failure hiding new ones |
-| `verify_agent_env.py` | 794 | structural drift: missing docs, broken skills, budgets, placeholders, unanchored hooks |
+| `verify_agent_env.py` | 788 | structural drift: missing docs, broken skills, budgets, placeholders, unanchored hooks |
 | `garden.py` | 1210 | context rot: dead paths and commands, changed declared dependencies, stale task lists and lanes, unrouted docs, deny rules naming renamed files, tool versions the probes have not seen |
-| `format_changed.py` | 185 | formatting-only CI failures after agent edits |
-| `cross_review.py`, `cross-review` | 967 | Claude commits and plans landing without an independent Codex review of exactly that content, including content a Git hook changed during the commit |
+| `format_changed.py` | 189 | formatting-only CI failures after agent edits |
+| `cross_review.py`, `cross-review` | 745 | plans, and commits at the pre-land range check, passing without an independent Codex review of exactly that content |
 | `work-management`, `plan-review` | 130 | multi-session work lost to compaction; unchecked plans; approval requests for routine adjustments; unbounded unattended runs |
 | `pre-land-review` | 68 | unreviewed commits, secrets, docs the change made wrong, older drift, over-building, cross-lane copies |
 | `maintenance` | 37 | stale claims, rules the tools stopped honouring, rules nothing needs, kit updates applied by hand |
@@ -244,10 +245,10 @@ These sections are required, in this order (the verifier checks the headings):
 - **`## Verify your work`:** "Read the tests, call sites and nearby patterns first; ask
   when ambiguity would change behaviour, APIs, data or dependencies. Make the smallest
   change that meets the acceptance criteria. Before calling work done, run the checks,
-  read the diff for drift and placeholders, and report the evidence. Stage exactly the
-  intended commit and pass the Codex review in `docs/agent-workflows/cross-review.md`
-  before committing; the commit hook enforces it. Add a regression
-  test when automatable. Never weaken, skip or delete a test to pass: fix the code, or
+  read the diff for drift and placeholders, and report the evidence. Every commit
+  passes the Codex review in `docs/agent-workflows/cross-review.md` before it lands; the
+  pre-land range check lists any without one. Add a regression test for a fixed bug
+  when automatable. Never weaken, skip or delete a test to pass: fix the code, or
   change the test on purpose and say so."
 - **`## Codebase map`:** `docs/dev/architecture.md` for the framework scripts; each
   workspace's AGENTS.md routes to its own docs and its clone's. Docs are written by

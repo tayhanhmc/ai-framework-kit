@@ -4,9 +4,9 @@ Run before work lands on the default branch: before opening a PR when the projec
 PRs, or before pushing when commits go straight to the default branch. `<base>` is the
 remote default branch (`origin/main`); `<lane>` is the checkout holding the work (a lane,
 or `repo/` itself when committing to main), so `<base>..HEAD` is exactly what is about to
-land. It reports; the user decides. Step 1 always runs. Steps 2 and 3 scale with
-behavioural risk (`docs/agent-workflows/plan-review.md`), not line count: skip them for a
-mechanical or low-risk change, and say so in the report.
+land. It reports; the user decides. Step 1 always runs. Step 2 scales with behavioural
+risk (`docs/agent-workflows/plan-review.md`), not line count; step 3 runs on its own
+trigger below. Say in the report which you skipped.
 
 ## 1. Deterministic step
 
@@ -14,8 +14,9 @@ mechanical or low-risk change, and say so in the report.
   exit 0 passes: report exit 3 (DEGRADED, a `baseline_failing` gate failed, so new
   failures in it are invisible) as unverified, and exit 2 as not run.
 - Every commit reviewed: `cross_review.py check --target <lane> --range <base>..HEAD`
-  from the framework root. A commit it lists (a Git hook changed it, or it was made
-  outside Claude) gets `cross_review.py review --target <lane> --commit <sha>` first.
+  from the framework root lists commits without a current passing review. Review each
+  with `cross_review.py review --target <lane> --commit <sha>` and act on the findings
+  as `docs/agent-workflows/cross-review.md` says, until the check exits 0.
 - Net lines from `git diff --shortstat <base>...HEAD`; explain a large surprise, but a
   difference from the plan's estimate alone needs no approval.
 - `garden.py --changes <base> --target <lane>`: fix mechanical doc drift in this same
@@ -32,7 +33,7 @@ mechanical or low-risk change, and say so in the report.
   their go-ahead. Framework files are scanned by the pre-commit hook at every commit.
 - Reread each doc the change added or edited under `docs/` against
   `docs/guidelines/agent_docs.md`, and fix what breaks it.
-- Duplicate scan, below.
+- Duplicate scan, below, when other lanes are open.
 
 ### Duplicate scan
 
@@ -48,8 +49,8 @@ catches them.
 
 ## 2. Correctness
 
-Every commit already passed the Codex review in `docs/agent-workflows/cross-review.md`,
-one change at a time. For risky changes, run the built-in `/code-review` once over the
+Step 1 reviewed every commit with Codex (`docs/agent-workflows/cross-review.md`), one
+change at a time. For risky changes, run the built-in `/code-review` once over the
 whole `<base>..HEAD` diff, which catches interactions between commits. Record findings
 that duplicate the commit reviews, and false positives, in the task file: they decide
 whether this layer keeps earning its time.

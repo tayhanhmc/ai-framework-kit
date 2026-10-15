@@ -83,12 +83,6 @@ def stage(repo: Path, value: int, name: str = "code.py") -> None:
     cr.git(repo, "add", name)
 
 
-def bash(root: Path, command: str, cwd: Path | None = None) -> dict[str, Any]:
-    return cr.hook(
-        {"cwd": str(cwd or root), "tool_name": "Bash", "tool_input": {"command": command}}
-    )
-
-
 def decision(output: dict[str, Any]) -> str | None:
     value = output.get("hookSpecificOutput", {}).get("permissionDecision")
     return None if value is None else str(value)
@@ -227,79 +221,7 @@ def test_lock_prevents_duplicate_review(root: Path, provider: list[str]) -> None
         cr.review_staged(clone, [])
 
 
-@pytest.mark.parametrize(
-    "command",
-    [
-        "git commit -m 'fix: add tests'",
-        "cd shop/repo && git commit -qm 'msg -a'",
-        "git -C shop/repo commit -m 'x; y'",
-        "git commit --amend --no-edit --author='A <a@example.com>'",
-        "git commit -F msg.txt | tee log",
-        "git commit --message=done -s 2>&1",
-        "git --no-pager commit -m x > /dev/null 2>&1 && git push && git log -1",
-    ],
-)
-def test_plain_commits_are_checked(root: Path, provider: list[str], command: str) -> None:
-    clone = root / "shop/repo"
-    cwd = root if "shop/repo" in command else clone  # The commit lands in the clone.
-    assert bash(root, command, cwd=cwd) == {}  # Nothing staged.
-    stage(clone, 2)
-    denied = bash(root, command, cwd=cwd)
-    assert decision(denied) == "deny"
-    reason = denied["hookSpecificOutput"]["permissionDecisionReason"]
-    assert "cross_review.py review --target shop/repo" in reason
-    assert cr.main(["review", "--target", str(clone)]) == 0
-    assert bash(root, command, cwd=cwd) == {}
-
-
-@pytest.mark.parametrize(
-    ("command", "why"),
-    [
-        ("git commit -am x", "outside the reviewed index"),
-        ("git commit --all -m x", "outside the reviewed index"),
-        ("git commit -p", "outside the reviewed index"),
-        ("git commit --pathspec-from=list.txt -m x", "outside the reviewed index"),
-        ("git commit code.py -m x", "outside the reviewed index"),
-        ("git commit -m x -- code.py", "outside the reviewed index"),
-        ("git add code.py && git commit -m x", "other Git commands"),
-        ("git stash pop; git commit -m x", "other Git commands"),
-        ("export GIT_INDEX_FILE=/tmp/i; git commit -m x", "other Git commands"),
-        ('git commit -m "$(git add -A)msg"', "substitution"),
-        ("git commit -m `date`", "substitution"),
-        ("git commit -m a && git commit -m b", "once per command"),
-        ("bash -c 'git commit -m x'", "wrapper"),
-        ("git commit -m ok && bash -c 'git add o.py; git commit -m x'", "wrapper"),
-        ("echo `git commit -m x`", "wrapper"),
-        ("time git commit -m x", "wrapper"),
-        ("command git commit -m x", "wrapper"),
-        ("{ git commit -m x; }", "wrapper"),
-        ("if true; then git commit -m x; fi", "wrapper"),
-        ("GIT_INDEX_FILE=/tmp/other git commit -m x", "wrapper"),
-        ("env GIT_DIR=/tmp/x git commit -m x", "wrapper"),
-        ("git --git-dir=/tmp/x commit -m x", "wrapper"),
-        ("git -c core.hooksPath=/dev/null commit -m x", "wrapper"),
-        ("git --no-pager -c core.hooksPath=/dev/null commit -m x", "wrapper"),
-        ("git commit -m 'unterminated", "cannot be parsed"),
-    ],
-)
-def test_commit_forms_the_hook_cannot_see_are_denied(
-    root: Path, provider: list[str], command: str, why: str
-) -> None:
-    stage(root / "shop/repo", 2)
-    assert cr.main(["review", "--target", str(root / "shop/repo")]) == 0
-    denied = bash(root, command)
-    assert decision(denied) == "deny" and why in json.dumps(denied)
-
-
-@pytest.mark.parametrize(
-    "command", ["git log --grep commit", "git status && echo commit", "git commit-tree HEAD^{tree}"]
-)
-def test_other_commands_pass(root: Path, provider: list[str], command: str) -> None:
-    stage(root / "shop/repo", 2)
-    assert bash(root, command) == {}
-
-
-def test_only_the_checkout_being_committed_is_checked(root: Path, provider: list[str]) -> None:
+def test_checkouts_skip_deleted_lanes(root: Path) -> None:
     clone = root / "shop/repo"
     lane = root / "shop/.worktrees/feature"
     cr.git(clone, "worktree", "add", "-b", "feature", str(lane))
@@ -309,38 +231,17 @@ def test_only_the_checkout_being_committed_is_checked(root: Path, provider: list
         path.unlink() if path.is_file() else path.rmdir()
     gone.rmdir()  # Listed by Git but deleted: skipped.
     assert set(cr.checkouts(root)) == {root, clone, lane}
-    stage(lane, 2)
-    (root / "notes.md").write_text("framework change\n")
-    cr.git(root, "add", "notes.md")
-    reason = json.dumps(bash(root, "git commit -m x"))
-    assert "--target ." in reason and "worktrees" not in reason  # The lane is not this commit.
-    lane_reason = json.dumps(bash(root, "git -C shop/.worktrees/feature commit -m x"))
-    assert "--target shop/.worktrees/feature" in lane_reason
-    assert cr.main(["review", "--target", str(root)]) == 0
-    assert bash(root, "git commit -m x") == {}  # The unreviewed lane does not block it.
-    assert decision(bash(root, "cd shop/.worktrees/feature && git commit -m x")) == "deny"
-    assert cr.main(["review", "--target", str(lane)]) == 0
-    assert bash(root, "cd shop/.worktrees/feature && git commit -m x") == {}
-    for unknown in ("cd $HOME && git commit -m x", "git -C ~/x commit -m x", "cd - && git commit"):
-        assert "literal" in json.dumps(bash(root, unknown))
-    outside = root.parent / "elsewhere"
-    outside.mkdir()
-    cr.git(outside, "init")
-    stage(outside, 2)
-    assert bash(root, f"git -C {outside} commit -m x") == {}  # Not a framework checkout.
 
 
 def test_hook_failure_denies_and_reviewer_is_exempt(
-    root: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    payload = {"cwd": "/", "tool_name": "Bash", "tool_input": {"command": "git commit -m x"}}
+    payload = {"cwd": "/", "tool_name": "ExitPlanMode", "tool_input": {"plan": "x"}}
     monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(payload)))
     assert cr.main(["hook"]) == 0
     assert "could not run" in capsys.readouterr().out  # No framework root: fail closed.
     monkeypatch.setenv("AI_FRAMEWORK_REVIEWER", "1")
     assert cr.hook(payload) == {}
-    monkeypatch.delenv("AI_FRAMEWORK_REVIEWER")
-    assert bash(root, "ls") == {}  # Only commits are checked.
 
 
 def test_plan_hook_reviews_then_asks_on_the_same_plan(root: Path, provider: list[str]) -> None:
@@ -457,78 +358,27 @@ def test_changed_context_or_repository_is_reviewed_again(
     assert len(provider) == 4  # The code the plan was checked against moved.
 
 
-def after(root: Path, command: str, event: str = "PostToolUse") -> dict[str, Any]:
-    payload = {"cwd": str(root), "tool_name": "Bash", "tool_input": {"command": command}}
-    return cr.hook({**payload, "hook_event_name": event})
-
-
 def commit(repo: Path, message: str = "x", *extra: str) -> None:
     """A real `git commit`, running the repository's own hooks."""
     cr.git(repo, "commit", "-q", "-m", message, *extra)
 
 
-def test_hook_rewriting_the_index_cannot_land_unreviewed(root: Path, provider: list[str]) -> None:
-    clone = root / "shop/repo"
-    command = "git -C shop/repo commit -m x"
-    stage(clone, 2)
-    assert cr.main(["review", "--target", str(clone)]) == 0
-    hook_file = Path(cr.out(clone, "rev-parse", "--git-path", "hooks"))
-    hook_file = (hook_file if hook_file.is_absolute() else clone / hook_file) / "pre-commit"
-    hook_file.write_text("#!/bin/sh\necho 'value = 3' > code.py\ngit add code.py\n")
-    hook_file.chmod(0o755)
-    assert bash(root, command) == {}  # The gate saw the reviewed index.
-    commit(clone)
-    assert cr.out(clone, "show", "HEAD:code.py") == "value = 3"  # The product hook ran.
-    landed = after(root, command)
-    assert landed["decision"] == "block" and "not the reviewed tree" in landed["reason"]
-    assert "--commit HEAD" in landed["reason"]
-    assert after(root, command) == {}  # Reported once; the range check remains.
-    assert cr.main(["check", "--target", str(clone), "--range", "HEAD~1..HEAD"]) == 1
-    assert cr.main(["review", "--target", str(clone), "--commit", "HEAD"]) == 1  # Codex sees 3.
-    hook_file.unlink()
-
-
-def test_landing_check_accepts_what_the_gate_allowed(
+def test_range_check_lists_commits_without_a_review(
     root: Path, provider: list[str], capsys: pytest.CaptureFixture[str]
 ) -> None:
     clone = root / "shop/repo"
-    command = "git -C shop/repo commit -m x"
     assert cr.main(["check", "--target", str(clone), "--range", "HEAD"]) == 1
     assert "not reviewed" in capsys.readouterr().out  # The initial commit had no review.
     stage(clone, 2)
     assert cr.main(["review", "--target", str(clone)]) == 0
-    assert bash(root, command) == {}
     commit(clone)
-    assert after(root, command) == {}
     assert cr.main(["check", "--target", str(clone), "--range", "HEAD~1..HEAD"]) == 0
-    stage(clone, 4)  # Amend: the review covers only the increment on the old commit.
+    stage(clone, 4)  # Amend: the staged review covers only the increment on the old commit.
     assert cr.main(["review", "--target", str(clone)]) == 0
-    amend = "git -C shop/repo commit --amend --no-edit"
-    assert bash(root, amend) == {}
     commit(clone, "x", "--amend")
-    assert "amended commit" in after(root, amend)["reason"]
     assert cr.main(["check", "--target", str(clone), "--range", "HEAD~1..HEAD"]) == 1
     assert cr.main(["review", "--target", str(clone), "--commit", "HEAD"]) == 0
     assert cr.main(["check", "--target", str(clone), "--range", "HEAD~1..HEAD"]) == 0
-    stage(clone, 5)
-    assert cr.main(["review", "--target", str(clone)]) == 0
-    assert bash(root, command) == {}  # Allowed, but the commit then failed.
-    assert after(root, command, "PostToolUseFailure") == {}
-
-
-def test_failed_tool_call_still_reports_divergence(root: Path, provider: list[str]) -> None:
-    clone = root / "shop/repo"
-    command = "git -C shop/repo commit -m x && false"
-    stage(clone, 2)
-    assert cr.main(["review", "--target", str(clone)]) == 0
-    assert bash(root, command) == {}
-    stage(clone, 6)  # A concurrent change between the gate and the commit.
-    commit(clone)
-    output = after(root, command, "PostToolUseFailure")
-    assert "decision" not in output
-    context = output["hookSpecificOutput"]
-    assert context["hookEventName"] == "PostToolUseFailure"
-    assert "not the reviewed tree" in context["additionalContext"]
 
 
 def test_changed_context_revokes_the_commit_approval(
@@ -542,8 +392,7 @@ def test_changed_context_revokes_the_commit_approval(
     assert receipt["context"][0]["path"] == str(task.resolve()) and cr.approved(clone)
     task.write_text("Value must be 5")
     assert not cr.approved(clone)
-    reason = json.dumps(bash(root, "git commit -m x", cwd=clone))
-    assert "context file" in reason and "task.md" in reason
+    assert "task.md" in str(cr.approval_problem(clone, *cr.candidate(clone)))
     assert cr.main(["check", "--target", str(clone)]) == 1
     cr.review_staged(clone, [task])
     assert cr.approved(clone) and len(provider) == 2
@@ -559,7 +408,7 @@ def test_older_policy_receipts_do_not_count(
     cr.review_staged(clone, [])
     monkeypatch.setattr(cr, "POLICY", "next")
     assert not cr.approved(clone)
-    assert "older review policy" in json.dumps(bash(root, "git commit -m x", cwd=clone))
+    assert "older review policy" in str(cr.approval_problem(clone, *cr.candidate(clone)))
     cr.review_staged(clone, [])
     assert cr.approved(clone) and len(provider) == 2
 
@@ -632,40 +481,6 @@ def test_blocked_plan_is_reviewed_again_when_the_code_moved(
     stage(root / "shop/repo", 2)
     assert decision(plan(unsafe)) == "deny" and len(provider) == 2  # Fresh review, not "ask".
     assert decision(plan(unsafe)) == "ask" and len(provider) == 2
-    after_plan = {"cwd": str(root), "tool_name": "ExitPlanMode", "hook_event_name": "PostToolUse"}
-    assert cr.hook({**after_plan, "tool_input": {"plan": unsafe}}) == {}
-
-
-def test_post_hook_errors_are_reported_as_context(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], tmp_path: Path
-) -> None:
-    payload = {
-        "cwd": str(tmp_path / "missing"),
-        "hook_event_name": "PostToolUse",
-        "tool_name": "Bash",
-        "tool_input": {"command": "git commit -m x"},
-    }
-    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(payload)))
-    assert cr.main(["hook"]) == 0
-    output = json.loads(capsys.readouterr().out)
-    assert "could not run" in output["hookSpecificOutput"]["additionalContext"]
-    assert output["hookSpecificOutput"]["hookEventName"] == "PostToolUse"
-
-
-@pytest.mark.parametrize(
-    "command",
-    [
-        "pushd shop/repo && git commit -m x",
-        "CDPATH=shop cd repo && git commit -m x",
-        "builtin cd shop/repo && git commit -m x",
-        "echo start && git commit -m x",
-    ],
-)
-def test_unfollowable_folder_changes_are_denied(
-    root: Path, provider: list[str], command: str
-) -> None:
-    stage(root / "shop/repo", 3)  # Unreviewed work where the command may commit.
-    assert "literal" in json.dumps(bash(root, command))
 
 
 def test_amending_an_unreviewed_commit_does_not_launder_it(root: Path, provider: list[str]) -> None:
@@ -674,10 +489,7 @@ def test_amending_an_unreviewed_commit_does_not_launder_it(root: Path, provider:
     commit(clone, "made outside Claude")  # Never reviewed.
     stage(clone, 4)
     assert cr.main(["review", "--target", str(clone)]) == 0  # Only the increment.
-    amend = "git -C shop/repo commit --amend --no-edit"
-    assert bash(root, amend) == {}
     commit(clone, "x", "--amend")
-    assert "--commit HEAD" in after(root, amend)["reason"]
     assert cr.main(["check", "--target", str(clone), "--range", "HEAD~1..HEAD"]) == 1
 
 
@@ -692,22 +504,6 @@ def test_landed_commits_keep_their_review_when_context_changes(
     commit(clone)
     task.write_text("Value must be 2\n- [x] done")  # Progress recorded after landing.
     assert cr.main(["check", "--target", str(clone), "--range", "HEAD~1..HEAD"]) == 0
-
-
-def test_stale_gate_record_does_not_raise_a_false_alarm(root: Path, provider: list[str]) -> None:
-    clone = root / "shop/repo"
-    stage(clone, 2)
-    assert cr.main(["review", "--target", str(clone)]) == 0
-    commit(clone)  # A reviewed commit to reword later.
-    stage(clone, 5)
-    assert cr.main(["review", "--target", str(clone)]) == 0
-    assert bash(root, "git -C shop/repo commit -m x") == {}  # Allowed, then not run.
-    cr.git(clone, "reset", "-q")
-    cr.git(clone, "checkout", "--", "code.py")
-    amend = "git -C shop/repo commit --amend -m reworded"
-    assert bash(root, amend) == {}  # Nothing staged: replaces the old record.
-    commit(clone, "reworded", "--amend")
-    assert after(root, amend) == {}
 
 
 @pytest.mark.parametrize(
@@ -725,40 +521,8 @@ def test_message_only_amend_keeps_the_reviewed_commit(root: Path, provider: list
     stage(clone, 2)
     assert cr.main(["review", "--target", str(clone)]) == 0
     commit(clone)
-    amend = "git -C shop/repo commit --amend -m reworded"
-    assert bash(root, amend) == {}
-    commit(clone, "reworded", "--amend")
-    assert after(root, amend) == {}  # Same parent and tree: the same reviewed content.
+    commit(clone, "reworded", "--amend")  # Same parent and tree: the same reviewed content.
     assert cr.main(["check", "--target", str(clone), "--range", "HEAD~1..HEAD"]) == 0
-
-
-@pytest.mark.parametrize(
-    "command",
-    [
-        "cd {other} | git commit -m x",
-        "cd {other} & git commit -m x",
-        "git diff --cached --quiet && cd {other}; git commit -m x",
-        "git status || cd {other} && git commit -m x",
-    ],
-)
-def test_cd_that_may_not_apply_is_denied(root: Path, provider: list[str], command: str) -> None:
-    other = root.parent / "elsewhere"
-    other.mkdir()
-    cr.git(other, "init")
-    (root / "notes.md").write_text("unreviewed framework change\n")
-    cr.git(root, "add", "notes.md")
-    assert "literal" in json.dumps(bash(root, command.format(other=other)))
-
-
-def test_cd_follows_the_logical_path_like_the_shell(root: Path, provider: list[str]) -> None:
-    other = root.parent / "elsewhere"
-    (other / "inner").mkdir(parents=True)
-    cr.git(other, "init")
-    (root / "link").symlink_to(other / "inner")
-    (root / "notes.md").write_text("unreviewed framework change\n")
-    cr.git(root, "add", "notes.md")
-    # The shell's `cd link/..` lands back in the framework, where the commit happens.
-    assert decision(bash(root, "cd link/.. && git commit -m x")) == "deny"
 
 
 def test_merge_rewritten_by_a_hook_fails_the_range_check(root: Path, provider: list[str]) -> None:

@@ -32,7 +32,6 @@ plants a random codeword and requires the model to repeat it, which it cannot gu
 | `claude.hook.*`, `claude.pretooluse.deny_honoured` | exec-form `args` (no shell, `${CLAUDE_PROJECT_DIR}` expanded), the `if` filter, a PreToolUse deny honoured and its reason delivered |
 | `claude.hook.onfailure_block` | a crashing hook blocks with `onFailure: block`; a control run without it does not |
 | `claude.exitplanmode.plan_in_payload` | the ExitPlanMode payload carries `tool_input.plan`; `-p` offers the tool only with a permission host, so the probe adds a stub MCP host |
-| `claude.posttooluse.*` | `decision: block` + `reason` and `additionalContext` reach the model; a nonzero Bash exit fires `PostToolUseFailure` |
 | `claude.launch.*`, `claude.agents_md.*` | which hooks and AGENTS.md files load from the root, a workspace, a workspace subfolder, the nested clone and a git worktree; an ancestor CLAUDE.md turns AGENTS.md off |
 | `claude.sessionstart.compact_reinjects` | `/compact` in a stream-json session fires SessionStart `compact` and its output reaches the model |
 | `codex.agents_md.*` | `codex debug prompt-input` (no model call) from a workspace and from inside the clone |

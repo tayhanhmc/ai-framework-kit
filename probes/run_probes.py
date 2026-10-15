@@ -61,18 +61,12 @@ record = {
 }
 with open(Path(__file__).resolve().parent / "hook-log.jsonl", "a") as log:
     log.write(json.dumps(record) + "\n")
-event = payload.get("hook_event_name", "")
 if mode == "deny":
     print(json.dumps({"hookSpecificOutput": {
         "hookEventName": "PreToolUse", "permissionDecision": "deny",
         "permissionDecisionReason": f"{tag} denied by the probe hook"}}))
 elif mode == "crash":
     raise RuntimeError("probe hook crashed on purpose")
-elif mode == "post-block":
-    reason, context = tag.split("|")
-    print(json.dumps({"decision": "block", "reason": f"{reason} probe feedback",
-                      "hookSpecificOutput": {"hookEventName": event,
-                                             "additionalContext": f"{context} probe context"}}))
 elif mode == "context":
     print(f"{tag}-{payload.get('source', 'none')}")
 '''
@@ -505,76 +499,6 @@ class Probes:
             )
         ]
 
-    def p_posttooluse(self) -> list[Result]:
-        """PostToolUse decision/reason and additionalContext reach the model; a Bash command
-        that exits nonzero fires PostToolUseFailure instead of PostToolUse."""
-        root, _ = self.fixture("posttooluse")
-        reason, context = token("REASON"), token("CTX")
-        self.settings(
-            root,
-            {
-                "PostToolUse": [
-                    {"matcher": "Bash", "hooks": [self.stub("post-block", f"{reason}|{context}")]}
-                ],
-                "PostToolUseFailure": [{"matcher": "Bash", "hooks": [self.stub("log", "FAIL")]}],
-            },
-        )
-        run = self.claude(
-            "posttooluse",
-            root,
-            "Use the Bash tool for each command, one call each, exactly as written:\n"
-            "1. echo probe-ok\n2. sh -c 'exit 3'\nThen reply with any hook feedback or"
-            " additional context you received, verbatim.",
-            tools="Bash",
-            allowed="Bash",
-            mode="dontAsk",
-        )
-        log = self.log(root)
-        seen = [
-            (r["payload"].get("hook_event_name"), r["payload"].get("tool_input", {}).get("command"))
-            for r in log
-        ]
-        fed = run.model_input()
-        ev = [run.summary(), f"hook events: {seen}"]
-        ran = bool(log)
-        exit3 = [e for e, c in seen if c and "exit 3" in c]
-        return [
-            Result(
-                "claude.posttooluse.block_reason_delivered",
-                "PostToolUse `decision: block` + `reason` is delivered to the model",
-                ("PASS" if reason in fed + run.reply() else "FAIL") if ran else "UNTESTED",
-                ev
-                + [
-                    f"random reason token in streamed model input: {reason in fed}; quoted in"
-                    f" reply: {reason in run.reply()} (stream-json does not echo injected hook"
-                    " text; a random token in the reply proves the model received it)"
-                ],
-                cost_usd=run.cost,
-                seconds=run.proc.seconds,
-            ),
-            Result(
-                "claude.posttooluse.additional_context_delivered",
-                "PostToolUse `hookSpecificOutput.additionalContext` is delivered to the model",
-                ("PASS" if context in fed + run.reply() else "FAIL") if ran else "UNTESTED",
-                [
-                    f"random context token in streamed model input: {context in fed}; quoted in"
-                    f" reply: {context in run.reply()}"
-                ],
-            ),
-            Result(
-                "claude.posttooluse.nonzero_exit_event",
-                "a Bash command exiting nonzero fires PostToolUseFailure, not PostToolUse",
-                (
-                    "PASS"
-                    if exit3 and "PostToolUseFailure" in exit3 and "PostToolUse" not in exit3
-                    else "FAIL"
-                )
-                if exit3
-                else "UNTESTED",
-                [f"events for `exit 3`: {exit3}"],
-            ),
-        ]
-
     def p_loading_and_resolution(self) -> list[Result]:
         """Launch folders: root, workspace, a workspace subfolder, inside the nested clone,
         and a workspace inside a git worktree. Hook resolution comes from the stub log and
@@ -872,7 +796,6 @@ PROBES: list[tuple[str, str, bool]] = [
     ("p_pretooluse_deny", "claude.hook", True),
     ("p_onfailure_block", "claude.hook.onfailure", True),
     ("p_exitplanmode", "claude.exitplanmode", True),
-    ("p_posttooluse", "claude.posttooluse", True),
     ("p_loading_and_resolution", "claude.launch", True),
     ("p_compaction", "claude.sessionstart", True),
     ("p_codex_loading", "codex.agents_md", False),
