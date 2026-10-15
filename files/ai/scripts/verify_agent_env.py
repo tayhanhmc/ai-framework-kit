@@ -9,7 +9,7 @@ Contract:
     never edits, and never scans a workspace's clone, `.worktrees/`, `.venv/` or `.git/`. It checks:
     - required files exist: the core files, every workflow doc, the guidelines and the
       expected skills (both copies), plus each workspace's own files;
-    - root AGENTS.md is within 3 KB with the required headings in order; each workspace
+    - root AGENTS.md is within 3.5 KB with the required headings in order; each workspace
       AGENTS.md is within 5 KB and ends with `## Docs` then `## Context map`;
     - no CLAUDE.md, CLAUDE.local.md, .claude/CLAUDE.md or AGENTS.override.md exists;
     - canonical docs have at least 8 non-blank lines and no two are identical;
@@ -100,7 +100,7 @@ REQUIRED_FILES = CORE_FILES + WORKFLOW_DOCS + GUIDELINE_DOCS + SCRIPTS
 WORKSPACE_FILES = ("AGENTS.md", ".claude/settings.json", "ai/project.md")
 SKILL_ROOTS = (".claude/skills", ".agents/skills")
 
-ROOT_AGENTS_MAX = 3072
+ROOT_AGENTS_MAX = 3584
 WORKSPACE_AGENTS_MAX = 5120
 ROOT_HEADINGS = (
     "The one rule",

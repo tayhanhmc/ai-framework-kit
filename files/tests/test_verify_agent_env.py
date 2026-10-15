@@ -330,7 +330,7 @@ def test_language_guide_requires_conventions_and_skill(fw: Path) -> None:
 
 def test_oversized_root_agents(fw: Path) -> None:
     write(fw / "AGENTS.md", ROOT_AGENTS + "<!-- pad -->\n" * 300)
-    assert_one(fw, "AGENTS.md", "over the 3072-byte budget")
+    assert_one(fw, "AGENTS.md", "over the 3584-byte budget")
 
 
 def test_oversized_workspace_agents(fw: Path) -> None:

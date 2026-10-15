@@ -19,7 +19,8 @@ Contract:
       On a timeout, or when this script gets SIGINT, SIGTERM or SIGHUP, the whole group is
       terminated (SIGTERM, then SIGKILL after a grace period); whatever a gate leaves
       running in its group when it exits is terminated the same way. A daemon that
-      starts its own session (`setsid`) is out of reach. On Windows a timeout or
+      starts its own session (`setsid`) is out of reach. On Windows (best effort; agent
+      tooling supports macOS and Linux) a timeout or
       interruption stops the gate's process tree with `taskkill /T /F` (no grace period),
       and children a gate leaves behind after exiting normally are not reached.
     - `--skip NAME` is the only way to leave a gate out; every skip is printed. An unknown
