@@ -42,8 +42,6 @@ from pathlib import Path
 
 PROFILE_NAME = "workspace.toml"
 DEFAULT_GATE_TIMEOUT = 1800
-# Where a virtual environment keeps its executables; product_env drops this directory.
-VENV_BIN = "Scripts" if sys.platform == "win32" else "bin"
 _KEYS = {
     "name",
     "remote",
@@ -207,7 +205,7 @@ def load_profile(path: Path) -> Profile:
     test = _gates(data, "test", where, workspace, taken)
     baseline = _str_list(data, "baseline_failing", where)
     clone = Path(_str(data, "clone", where, "repo"))
-    if clone.anchor or ".." in clone.parts:  # anchor: also Windows-rooted `/x` and `C:x`
+    if clone.is_absolute() or ".." in clone.parts:
         raise ProfileError(f"{where}: `clone` must be a relative path without `..`: {clone}")
     for gate in baseline:
         if gate not in taken:
@@ -253,9 +251,8 @@ def product_env() -> dict[str, str]:
     if sys.prefix != sys.base_prefix:
         envs.add(Path(sys.prefix).resolve())
     if "PATH" in env:
-        bins = {os.path.normcase(e / VENV_BIN) for e in envs}
-        entries = env["PATH"].split(os.pathsep)
-        kept = [p for p in entries if not p or os.path.normcase(Path(p).resolve()) not in bins]
+        bins = {e / "bin" for e in envs}
+        kept = [p for p in env["PATH"].split(os.pathsep) if not p or Path(p).resolve() not in bins]
         env["PATH"] = os.pathsep.join(kept)
     project_env = env.get("UV_PROJECT_ENVIRONMENT", "")
     if os.path.isabs(project_env) and Path(project_env).resolve() in envs:

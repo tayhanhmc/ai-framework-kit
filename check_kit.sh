@@ -16,7 +16,7 @@ ruff_args=(--isolated --line-length 100 --target-version py311)
   kit_py=(install.py tests eval probes --exclude eval/fixtures)
   "${py[@]}" "${tools[@]}" -- ruff check "${ruff_args[@]}" --select E,F,I,B,UP,SIM "${kit_py[@]}"
   "${py[@]}" "${tools[@]}" -- ruff format "${ruff_args[@]}" --check "${kit_py[@]}"
-  MYPYPATH=files/ai/scripts "${py[@]}" "${tools[@]}" -- mypy --strict --python-version 3.11 install.py tests \
+  "${py[@]}" "${tools[@]}" -- mypy --strict --python-version 3.11 install.py tests \
     probes/run_probes.py eval/run.py eval/harness.py eval/grader.py eval/live.py \
     eval/summarize.py eval/unittest_json.py
   "${py[@]}" "${tools[@]}" -- pytest -q -p no:cacheprovider tests eval/tests

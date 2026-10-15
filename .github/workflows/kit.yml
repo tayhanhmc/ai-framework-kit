@@ -40,18 +40,3 @@ jobs:
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
       - name: End-to-end install with a Python and a Node product
         run: ./smoke_kit.sh
-
-  windows:
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
-      - name: Gate runner on Windows
-        run: uv run --isolated --no-config --no-project --python 3.11 --with pytest==9.1.1 -- pytest -q -p no:cacheprovider tests/test_windows_gates.py
-      - name: Framework tests collect, and gate tests pass, on Windows
-        working-directory: files
-        run: |
-          uv run --isolated --no-config --no-project --python 3.11 --with pytest==9.1.1 -- pytest -q -p no:cacheprovider --collect-only
-          uv run --isolated --no-config --no-project --python 3.11 --with pytest==9.1.1 -- pytest -q -p no:cacheprovider tests/test_check_code.py tests/test_workspace_profile.py

@@ -17,9 +17,6 @@ import check_code
 SCRIPT = Path(__file__).resolve().parents[1] / "ai" / "scripts" / "check_code.py"
 PASS = [sys.executable, "-c", "print('ok')"]
 FAIL = [sys.executable, "-c", "import sys; sys.exit(3)"]
-# Shell-script tools, signals and process groups; the kit's Windows CI covers Windows gates.
-posix = pytest.mark.skipif(sys.platform == "win32", reason="POSIX only")
-STOP = [getattr(signal, n) for n in ("SIGTERM", "SIGINT", "SIGHUP") if hasattr(signal, n)]
 
 
 def git(cwd: Path, *args: str) -> str:
@@ -139,7 +136,6 @@ def test_missing_tool_exits_2_before_running(
     assert "==> ok" not in captured.out
 
 
-@posix
 def test_relative_tool_in_target(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     ws = make_workspace(tmp_path, gate("local", ["./run.sh"]))
     script = ws / "repo" / "run.sh"
@@ -338,7 +334,6 @@ def tool(folder: Path, name: str, says: str) -> None:
     (folder / name).chmod(0o755)
 
 
-@posix
 def test_framework_environment_does_not_leak(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str]
 ) -> None:
@@ -367,7 +362,6 @@ def test_framework_environment_does_not_leak(
     assert f"env={(ws / 'repo' / '.venv').resolve()}" in out
 
 
-@posix
 @pytest.mark.skipif(shutil.which("mise") is None, reason="mise is not installed")
 def test_mise_exec_gate_does_not_see_framework_tools(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str]
@@ -407,7 +401,6 @@ def gone(pid: int, seconds: float = 10) -> bool:
     return False
 
 
-@posix
 def test_timeout_kills_the_gate_group(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -426,7 +419,6 @@ def test_timeout_kills_the_gate_group(
     assert gone(int(pid_file.read_text()))
 
 
-@posix
 def test_leftover_processes_are_killed_after_a_pass(tmp_path: Path) -> None:
     pid_file = tmp_path / "pid"
     code = "import subprocess, sys; open(sys.argv[1], 'w').write(str(subprocess.Popen("
@@ -436,7 +428,6 @@ def test_leftover_processes_are_killed_after_a_pass(tmp_path: Path) -> None:
     assert gone(int(pid_file.read_text()))
 
 
-@posix
 def test_leftover_children_get_the_grace_period(tmp_path: Path) -> None:
     marker = tmp_path / "cleaned"
     child = (
@@ -456,8 +447,7 @@ def test_leftover_children_get_the_grace_period(tmp_path: Path) -> None:
     assert marker.read_text() == "done"  # Cleaned up on SIGTERM before any SIGKILL.
 
 
-@posix
-@pytest.mark.parametrize("sig", STOP)
+@pytest.mark.parametrize("sig", [signal.SIGTERM, signal.SIGINT, signal.SIGHUP])
 def test_signal_interrupts_and_kills_the_gate_group(tmp_path: Path, sig: signal.Signals) -> None:
     pid_file = tmp_path / "pid"
     ws = make_workspace(tmp_path, gate("hang", [sys.executable, "-c", HANG, str(pid_file)]))
