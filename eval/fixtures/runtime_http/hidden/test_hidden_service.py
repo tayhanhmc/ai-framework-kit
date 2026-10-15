@@ -61,9 +61,13 @@ class HiddenServiceTest(unittest.TestCase):
                 cls.log.seek(0)
                 output = cls.log.read().decode(errors="replace")[-2000:]
                 cls.tearDownClass()
+                try:
+                    socket.create_connection(("127.0.0.1", cls.port), timeout=2).close()
+                    tcp = "connects"
+                except OSError as err:
+                    tcp = repr(err)
                 raise RuntimeError(
-                    f"service did not become ready (exit {code}, last {last}, proxies"
-                    f" {urllib.request.getproxies()}): {output}"
+                    f"service did not become ready (exit {code}, last {last}, tcp {tcp}): {output}"
                 )
             time.sleep(0.05)
 
