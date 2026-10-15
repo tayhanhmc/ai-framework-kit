@@ -123,6 +123,14 @@ def test_context_files_reach_the_reviewer(root: Path, provider: list[str], tmp_p
     assert "Value must be 2" in provider[-1] and "git diff --cached" in provider[-1]
 
 
+def test_product_reviews_keep_the_product_s_platforms(root: Path, provider: list[str]) -> None:
+    stage(root / "shop/repo", 2)
+    cr.review_staged(root / "shop/repo", [])
+    # Only the framework's own scripts are scoped to macOS and Linux.
+    prompt = " ".join(provider[-1].split())
+    assert "Product code is reviewed for the platforms its own docs name" in prompt
+
+
 def test_review_covers_the_frozen_snapshot_even_if_the_index_moves(
     root: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

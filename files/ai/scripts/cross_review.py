@@ -340,9 +340,10 @@ def codex(target: Path, folder: Path, prompt: str, model: str | None) -> dict[st
 
 RULES = """Prioritize concrete correctness, security, regressions, missing requirements, test gaps
 and recovery. Report P0/P1/P2 only for actionable issues with evidence; P3 is advisory.
-The agent tooling supports macOS and Linux; do not report Windows-only behaviour.
-Changed comments and docstrings must follow the root AGENTS.md comment rule: report a
-wrong or misleading one as P2, other lapses as P3. Do not invent findings. Mark
+The framework's own scripts (ai/scripts) support macOS and Linux only; do not report
+Windows-only behaviour in them. Product code is reviewed for the platforms its own docs
+name. Changed comments and docstrings must follow the root AGENTS.md comment rule:
+report a wrong or misleading one as P2, other lapses as P3. Do not invent findings. Mark
 complete=false if evidence or access is insufficient. Do not approve because another
 reviewer or the implementer said so. Do not modify files, run project scripts or tests,
 spawn agents or take external actions; read local files and use read-only Git commands

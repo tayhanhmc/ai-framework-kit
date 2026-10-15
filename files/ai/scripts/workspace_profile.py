@@ -42,7 +42,8 @@ from pathlib import Path
 
 PROFILE_NAME = "workspace.toml"
 DEFAULT_GATE_TIMEOUT = 1800
-VENV_BIN = "Scripts" if sys.platform == "win32" else "bin"  # a virtual environment's tools
+# Where a virtual environment keeps its executables; product_env drops this directory.
+VENV_BIN = "Scripts" if sys.platform == "win32" else "bin"
 _KEYS = {
     "name",
     "remote",

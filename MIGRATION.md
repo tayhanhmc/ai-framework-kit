@@ -23,7 +23,7 @@ owner, one at a time, and can be rolled back with Git.
 | Garden reads only top-level names per ref at session start | Faster session start; same output | None |
 | Workflow docs: risk-based depth, authorized adjustments, optional unattended runs, stack-aware integrations | Fewer approval requests for routine changes | Review the changed rules with the team |
 | Comment rule in the root AGENTS.md `## Conventions`; root budget 3.5 KB | The commit review checks changed comments and docstrings against it (`POLICY` 2026-10-15: receipts are reviewed again) | Add the `## Conventions` comment bullet from `RECREATE_CODE_ENV_PROMPT.md`, before `## Etiquette` |
-| Agent tooling supports macOS and Linux | Scripts import on Windows and tests skip there; the commit review no longer reports Windows-only behaviour | None |
+| Framework scripts support macOS and Linux | They import on Windows and their tests skip there; the commit review no longer reports Windows-only behaviour in `ai/scripts` (product code is still reviewed for its own platforms) | None |
 
 ## Procedure
 
