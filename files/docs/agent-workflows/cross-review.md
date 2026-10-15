@@ -45,7 +45,7 @@ rebuttal, report the findings to the user.
 
 ## Enforcement
 
-The Claude `PreToolUse` hook on `Bash` (filtered by `if: Bash(*commit*)`) denies a
+The Claude `PreToolUse` hook on `Bash` denies a
 `git commit` when the checkout it commits in (resolved from the session folder, `cd` and
 `git -C`; only a literal `cd <dir>` and read-only Git may come before the commit) has
 staged changes without a current passing receipt; staged work in other
@@ -55,7 +55,10 @@ author and amend options, optionally after `cd` or beside read-only Git commands
 (`status`, `log`, `show`, `diff`, `push`). It denies every other form that may commit:
 `-a`, `-p`, pathspecs, staging in the same command, wrappers (`bash -c`, `time`, `{ }`),
 command substitution, environment prefixes and other Git options. Stage in one command,
-review, then commit in another. A hook that cannot run denies.
+review, then commit in another with `-m <message>` or `-F <file>`, not
+`-m "$(cat <<EOF ...)"`. A hook that cannot run denies. The hook's `if: Bash(*commit*)`
+filter is best-effort: Claude Code also runs it for commands it cannot parse or that use
+`$()` or `$VAR`, and the hook allows those when they run no commit.
 
 The gate checks the index before Git runs. Git then runs the repository's own hooks
 during the commit (`pre-commit`, `prepare-commit-msg`, ...), and those may restage files;
@@ -69,7 +72,8 @@ Only Claude's commits are checked. Human commits, merges in a terminal and other
 are not. This is a workflow guard, not a security boundary: a script that commits
 indirectly, a Git alias (`git ci`) or a quoted subcommand (`git c""ommit`) is not seen by
 the gate; the landing range check still lists such commits. Plan snapshots skip
-ignored files and files marked skip-worktree or assume-unchanged. Use server-side branch checks if remote enforcement is needed.
+ignored files and files marked skip-worktree or assume-unchanged. Use server-side branch
+checks if remote enforcement is needed.
 
 ## Receipts and limits
 

@@ -273,7 +273,9 @@ note it.
    commit; on a first setup that is the whole kit. Fix findings in files this setup
    wrote. Findings in kit files installed unchanged go to the user, who decides whether
    to commit by hand or fix the kit first. The commit includes `.kit-install.toml` and
-   `.secrets.baseline`; no `*.kit-conflict-*` file may remain.
+   `.secrets.baseline`; no `*.kit-conflict-*` file may remain. Until then, unstage the framework files
+   (`git reset`): a staged, unreviewed framework index denies every agent commit in
+   the framework.
 5. Report:
    - what was built;
    - the verification evidence;
