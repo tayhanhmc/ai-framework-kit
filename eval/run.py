@@ -95,7 +95,8 @@ def validate_fixture(fixture: Fixture) -> list[tuple[bool, str]]:
             ref.success and ref.hidden_passed == ref.hidden_total > 0,
             f"reference solution passes ({ref.hidden_passed}/{ref.hidden_total}; "
             f"failures={ref.failures} regressions={ref.regressions} "
-            f"boundary={ref.boundary_violations})",
+            f"boundary={ref.boundary_violations})"
+            + ("".join(f"\n{d}" for d in ref.failure_details) if not ref.success else ""),
         )
     )
     results.append(

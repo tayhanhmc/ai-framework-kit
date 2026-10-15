@@ -45,6 +45,7 @@ class Grade:
     tests_modified: list[str] = field(default_factory=list)
     runtime_cleanup_ok: bool | None = None
     grader_errors: list[str] = field(default_factory=list)
+    failure_details: list[str] = field(default_factory=list)  # traceback tails
 
     def as_dict(self) -> dict[str, object]:
         return asdict(self)
@@ -268,4 +269,5 @@ def grade(fixture: Fixture, artifact: Path) -> Grade:
         tests_modified=modified,
         runtime_cleanup_ok=runtime_ok,
         grader_errors=errors,
+        failure_details=[d[-1500:] for d in hidden["details"]],
     )
