@@ -6,6 +6,7 @@ timeout or interruption stops the gate's process tree with `taskkill /T /F`.
 
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 import time
@@ -42,7 +43,7 @@ def workspace(tmp_path: Path, gates: str) -> Path:
 
 
 def gate(name: str, code: str, extra: str = "") -> str:
-    argv = ", ".join(repr(w).replace("'", '"') for w in [sys.executable, "-c", code])
+    argv = ", ".join(json.dumps(w) for w in [sys.executable, "-c", code])
     return f'[[lint]]\nname = "{name}"\nargv = [{argv}{extra}]\n'
 
 
@@ -65,7 +66,7 @@ def test_pass_fail_and_timeout(tmp_path: Path) -> None:
     assert check_code.run(["lint", "--skip", "bad"], cwd=ws) == 0
     assert check_code.run(["lint"], cwd=ws) == 1
     pid_file = tmp_path / "pid"
-    hang = gate("hang", HANG, f', "{pid_file.as_posix()}"') + "timeout = 3\n"
+    hang = gate("hang", HANG, ", " + json.dumps(str(pid_file))) + "timeout = 3\n"
     ws2 = workspace(tmp_path / "two", hang)
     start = time.monotonic()
     assert check_code.run(["lint"], cwd=ws2) == 1  # A timeout never passes.
