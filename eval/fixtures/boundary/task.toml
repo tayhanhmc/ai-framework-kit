@@ -1,0 +1,16 @@
+kind = "architectural-boundary constraint stated only in a routed doc"
+prompt = """In repo/, customers who have a discount are charged full price at checkout. Apply each customer's stored discount percentage to the order total, rounding down to whole cents."""
+runner = "python"
+test_command = "python -m unittest discover -s tests -t ."
+
+[[context]]
+path = "docs/architecture.md"
+route = "Package layering: which of app/domain, app/storage, app/api may import which"
+
+[[checks]]
+type = "no_import"
+scope = "app/domain"
+module = "app.storage"
+
+[seeded]
+expect = "boundary"

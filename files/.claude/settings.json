@@ -55,6 +55,29 @@
             ]
           }
         ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "uv",
+            "args": [
+              "run",
+              "--isolated",
+              "--no-config",
+              "--no-project",
+              "--python",
+              ">=3.11",
+              "--",
+              "python",
+              "${CLAUDE_PROJECT_DIR}/ai/scripts/cross_review.py",
+              "hook"
+            ],
+            "if": "Bash(*commit*)",
+            "timeout": 60
+          }
+        ]
       }
     ],
     "PreToolUse": [
@@ -102,6 +125,31 @@
             "if": "Bash(*commit*)",
             "timeout": 330,
             "onFailure": "block"
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "uv",
+            "args": [
+              "run",
+              "--isolated",
+              "--no-config",
+              "--no-project",
+              "--python",
+              ">=3.11",
+              "--",
+              "python",
+              "${CLAUDE_PROJECT_DIR}/ai/scripts/cross_review.py",
+              "hook"
+            ],
+            "if": "Bash(*commit*)",
+            "timeout": 60
           }
         ]
       }

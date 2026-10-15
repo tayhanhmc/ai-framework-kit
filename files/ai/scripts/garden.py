@@ -155,7 +155,7 @@ class Workspace:
 
 @dataclass(frozen=True)
 class CloneIndex:
-    paths: frozenset[str]  # names on any branch and in the selected checkout's index
+    paths: frozenset[str]  # top-level names on any branch and in the checkout's index
     dirs: frozenset[str]
 
     @property
@@ -488,9 +488,10 @@ class Garden:
                 head = git(checkout, "rev-parse", "--verify", "-q", "HEAD")
                 if head.returncode == 0:
                     shas.add(head.stdout.strip())
-                for sha in sorted(shas):
-                    files.update(ref_paths(checkout, sha))
-                index = CloneIndex(*with_dirs(files))
+                tops = {f.split("/", 1)[0] for f in files if f}
+                for sha in sorted(shas):  # Only top-level names are used (`.tops`).
+                    tops.update(git_out(checkout, "ls-tree", "--name-only", "-z", sha).split("\0"))
+                index = CloneIndex(*with_dirs(tops))
             self._clones[ws.clone] = index
         return self._clones[ws.clone]
 

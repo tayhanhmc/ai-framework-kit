@@ -1,0 +1,20 @@
+kind = "stale context: the routed doc describes an INI config the code no longer uses"
+prompt = """In repo/, add a `timeout_seconds` server setting: default 30, overridable from the config file, returned by `app.config.load()` as an int."""
+runner = "python"
+test_command = "python -m unittest discover -s tests -t ."
+
+[[context]]
+path = "docs/configuration.md"
+route = "Where settings live and how to add one"
+
+[[stale]]
+type = "path_exists"
+path = "settings.ini"
+
+[[stale]]
+type = "regex"
+pattern = "configparser"
+glob = "app/**/*.py"
+
+[seeded]
+expect = "stale"

@@ -10,11 +10,15 @@ Contract:
     - Relative paths resolve against the payload's `cwd`. Paths outside the framework root,
       and files that no longer exist, are dropped.
     - A file inside a checkout of a workspace (its clone, or a lane under
-      `.worktrees/<lane>`) gets only the formatters the workspace profile lists, run from
-      that checkout's root so the repo's own config applies, with `VIRTUAL_ENV` unset:
-      "ruff" runs `uv run --frozen ruff format <file>` on *.py and *.pyi.
-    - Any other framework *.py/*.pyi file (outside every checkout) gets the framework's ruff:
-      `uv run --frozen --project <framework root> ruff format <file>`.
+      `.worktrees/<lane>`) gets only the formatters the workspace profile lists for its
+      suffix, in profile order, run from that checkout's root so the repo's own config
+      applies, in the environment of `workspace_profile.product_env()` (no framework
+      `VIRTUAL_ENV` or venv bin folder): "ruff" runs `uv run --frozen ruff format <file>`
+      on *.py and *.pyi, and needs the checkout's `uv.lock` (without one it fails and
+      names `[[format]]`, rather than letting uv create an environment in the checkout);
+      a `[[format]]` entry runs its argv with `{file}` replaced by the file.
+    - Any other framework *.py/*.pyi file (outside every checkout) gets the framework's ruff,
+      with `VIRTUAL_ENV` unset: `uv run --frozen --project <framework root> ruff format <file>`.
     - Other files get nothing. Messages go to stderr.
 
 It is best-effort and never blocks an edit; pre-commit stays authoritative.
@@ -36,13 +40,14 @@ from pathlib import Path
 
 from workspace_profile import (
     PROFILE_NAME,
+    RUFF,
     ProfileError,
     find_framework_root,
     load_profile,
+    product_env,
     workspace_for,
 )
 
-PYTHON_SUFFIXES = (".py", ".pyi")
 FILE_TOOLS = ("Edit", "Write", "MultiEdit")
 PATCH_LINE = re.compile(r"^\*\*\* (?:Update File|Add File|Move to): (.+?)\s*$", re.MULTILINE)
 TIMEOUT_SECONDS = 120
@@ -95,9 +100,7 @@ def checkout_root(path: Path, workspace: Path) -> Path | None:
     return None
 
 
-def run_formatter(argv: list[str], cwd: Path, path: Path) -> bool:
-    env = dict(os.environ)
-    env.pop("VIRTUAL_ENV", None)
+def run_formatter(argv: list[str], cwd: Path, path: Path, env: dict[str, str]) -> bool:
     try:
         done = subprocess.run(
             argv,
@@ -121,21 +124,36 @@ def run_formatter(argv: list[str], cwd: Path, path: Path) -> bool:
 
 def format_file(path: Path, root: Path) -> bool:
     """Format one file; False when a formatter failed or could not run."""
-    if path.suffix not in PYTHON_SUFFIXES:
-        return True
     workspace = workspace_for(path, root)
     checkout = checkout_root(path, workspace) if workspace else None
     if workspace is None or checkout is None:
+        if path.suffix not in RUFF.suffixes:
+            return True
+        # The framework's own Ruff: keep its environment on PATH, unlike product_env().
+        env = dict(os.environ)
+        env.pop("VIRTUAL_ENV", None)
         argv = ["uv", "run", "--frozen", "--project", str(root), "ruff", "format", str(path)]
-        return run_formatter(argv, root, path)
+        return run_formatter(argv, root, path, env)
     try:
         profile = load_profile(workspace / PROFILE_NAME)
     except ProfileError as exc:
         say(f"cannot load the profile for {path}: {exc}")
         return False
-    if "ruff" not in profile.formatters:
-        return True
-    return run_formatter(["uv", "run", "--frozen", "ruff", "format", str(path)], checkout, path)
+    ok = True
+    env = product_env()
+    for formatter in profile.formatters:
+        if path.suffix not in formatter.suffixes:
+            continue
+        if formatter.requires and not (checkout / formatter.requires).is_file():
+            say(
+                f"`{formatter.argv[0]}` formatter skipped for {path}: {checkout} has no"
+                f" {formatter.requires}; use [[format]]"
+            )
+            ok = False
+            continue
+        argv = [w.replace("{file}", str(path)) for w in formatter.argv]
+        ok = run_formatter(argv, checkout, path, env) and ok
+    return ok
 
 
 def run(stdin: str, root: Path | None = None) -> int:

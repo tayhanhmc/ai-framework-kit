@@ -1,35 +1,31 @@
 #!/bin/bash
-# check_kit.sh: check the kit before using or changing it. Copies files/ into a scratch
-# framework, substitutes a prefix, then runs lint, tests, verifier and garden --static.
-# Minimal generated docs stand in for setup output. Exit 0 only if all pass.
+# check_kit.sh: check the kit before using or changing it. Lints and tests install.py, eval/
+# and probes/ (fixtures validated without a model; probes listed, never run), installs
+# files/ (uncommitted changes included) into a scratch framework with it, then runs lint,
+# tests, verifier and garden --static there. Minimal generated docs stand in for setup
+# output. UV_PYTHON picks the Python (default: the newest >=3.11). Exit 0 only if all pass.
 set -euo pipefail
 kit="$(cd "$(dirname "$0")" && pwd)"
 work="$(mktemp -d)"
 trap '/bin/rm -r "$work"' EXIT
-uv run --isolated --no-config --no-project --python ">=3.11" -- python - "$kit/files" "$work" <<'PY'
-import shutil
-import sys
-
-shutil.copytree(sys.argv[1], sys.argv[2], dirs_exist_ok=True, ignore=shutil.ignore_patterns(
-    "__pycache__", ".venv", ".pytest_cache", ".mypy_cache", ".ruff_cache", ".coverage",
-))
-PY
+py=(uv run --isolated --no-config --no-project --python "${UV_PYTHON:->=3.11}")
+tools=(--with pytest==9.1.1 --with ruff==0.17.0 --with mypy==2.4.0)
+ruff_args=(--isolated --line-length 100 --target-version py311)
+(
+  cd "$kit"
+  kit_py=(install.py tests eval probes --exclude eval/fixtures)
+  "${py[@]}" "${tools[@]}" -- ruff check "${ruff_args[@]}" --select E,F,I,B,UP,SIM "${kit_py[@]}"
+  "${py[@]}" "${tools[@]}" -- ruff format "${ruff_args[@]}" --check "${kit_py[@]}"
+  "${py[@]}" "${tools[@]}" -- mypy --strict --python-version 3.11 install.py tests \
+    probes/run_probes.py eval/run.py eval/harness.py eval/grader.py eval/live.py \
+    eval/summarize.py eval/unittest_json.py
+  "${py[@]}" "${tools[@]}" -- pytest -q -p no:cacheprovider tests eval/tests
+  "${py[@]}" -- python eval/run.py >/dev/null
+  "${py[@]}" -- python probes/run_probes.py >/dev/null
+)
+"${py[@]}" -- python "$kit/install.py" --framework "$work" --prefix kt \
+  --revision "$("$kit/kit_snapshot.sh")" >/dev/null
 cd "$work"
-for d in .claude/skills .agents/skills; do
-  for s in "$d"/__P__-*; do mv "$s" "$d/kt-${s##*/__P__-}"; done
-done
-uv run --isolated --no-config --no-project --python ">=3.11" -- python - <<'PY'
-from pathlib import Path
-
-for path in Path(".").rglob("*"):
-    if path.is_file():
-        try:
-            text = path.read_text(encoding="utf-8")
-        except UnicodeDecodeError:
-            continue
-        if "__P__" in text:
-            path.write_text(text.replace("__P__", "kt"), encoding="utf-8")
-PY
 git init -q -b main .
 uv lock -q && uv sync -q --locked
 uv run --locked poe lint

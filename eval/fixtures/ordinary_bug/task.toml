@@ -1,0 +1,4 @@
+kind = "ordinary bug fix needing no special docs"
+prompt = """In repo/, `paginate` in app/pagination.py returns the wrong items: asking for page 1 skips the first page of results. Fix it."""
+runner = "python"
+test_command = "python -m unittest discover -s tests -t ."

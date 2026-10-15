@@ -24,6 +24,12 @@ days old. After a model change, evaluate whether existing guidance still earns i
 7. Compare user-level instructions (`~/.claude/CLAUDE.md`, `~/.codex/AGENTS.md`, auto
    memory) with the framework's rules, and list contradictions.
 
+**Kit updates.** To take kit fixes, run the kit's `install.py --framework <root>
+--dry-run` from an up-to-date kit clone (the recorded `kit_revision` must be in it),
+review the diff with the user, run it, and resolve each `*.kit-conflict-*` sidecar with
+them. Then run the verifier, `poe lint` and `poe test`, and commit with the review.
+Roll back with Git: revert that commit.
+
 Propose one diff. The user approves it. Nothing is applied automatically, and nothing
 is deleted without evidence that the knowledge is obsolete; an old date or low usage
 alone is not enough. Never weaken enforcement to clear a finding.

@@ -25,5 +25,16 @@ Script tests prove detector behavior; they do not prove better agent outcomes.
    outcomes enough to justify its cost. Prune or narrow ineffective rules; preserve
    rare critical constraints unless their risk is covered elsewhere.
 
+The framework kit's eval folder implements this procedure (it stays with the kit, not in
+the framework). Its default mode checks every fixture without a model: each unmodified
+task fails its hidden acceptance tests, the reference solution passes, seeded boundary
+and stale-context violations are caught, and the runtime fixture leaves no server or
+bound port. Its live mode runs bounded `claude -p` trials per task, treatment (minimal,
+framework, or one proposed change at a time) and trial in fresh checkouts, grades them
+independently of the agent's report, and records one JSONL row per trial; its summary
+calls a difference inconclusive unless it is significant with at least five trials per
+arm. Hidden tests remain readable from the trial's shell, so it is a measuring aid, not
+a sealed benchmark.
+
 No task-specific benchmark result should become a general rule without checking its
 scope. Do not claim an improvement from lint, coverage or instruction-loading probes.

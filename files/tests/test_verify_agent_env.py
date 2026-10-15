@@ -69,7 +69,11 @@ def claude_settings(prefix: str) -> str:
 
     hooks = {
         "SessionStart": [group("startup|resume|clear|compact", "garden.py", "--session")],
-        "PostToolUse": [group("Edit|Write", "format_changed.py")],
+        "PostToolUse": [
+            group("Edit|Write", "format_changed.py"),
+            group("Bash", "cross_review.py", "hook"),
+        ],
+        "PostToolUseFailure": [group("Bash", "cross_review.py", "hook")],
         "PreToolUse": [
             group("ExitPlanMode", "cross_review.py", "hook"),
             group("Bash", "cross_review.py", "hook"),

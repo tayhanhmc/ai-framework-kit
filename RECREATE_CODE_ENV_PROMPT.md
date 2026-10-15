@@ -8,8 +8,12 @@ on a new machine. It handles a brand-new project and an established repository y
 Written 2026-10-13 from a framework in daily use since 2026-08 (Claude Code 2.1.296,
 codex-cli 0.162.1). Tool behaviour changes often. Where this prompt states how a tool
 behaves, step 9 probes it; when the tool disagrees, trust the probe and tell the user.
-After changing anything in `files/`, run `check_kit.sh` (lint, tests, and garden over
-the kit's own docs).
+After changing anything in `files/` or `install.py`, run `check_kit.sh` (installer
+tests, then an install into a scratch framework with lint, tests, verifier and garden);
+before a release, also run the slower end-to-end `smoke_kit.sh`. `probes/` holds opt-in
+native probes of the CLI behaviour this prompt relies on (all passed with Claude Code
+2.1.300 and codex-cli 0.162.1 on 2026-10-14); `eval/` measures whether a context change
+improves agent outcomes (`files/docs/guidelines/context_evaluation.md`).
 
 ---
 
@@ -52,12 +56,17 @@ Apply these to every file you write.
    prevents a failure. Each added rule records its date and the failure it prevents.
 7. **Built-ins first, small tested scripts second,** third-party plugins only when
    vetted, pinned and measured.
-8. **Proportion.** Every component states the failure it prevents and its size. A
-   component more than twice its estimate goes back to the user.
-9. **Docs are routed, one hop deep.** An AGENTS.md context map sends each kind of task
+8. **Proportion.** Every component states the failure it prevents. Scrutiny follows
+   behavioural risk, not size: a one-line authorization change can need more review
+   than a large mechanical edit. Implementation adjustments inside an approved plan need
+   no new approval; changes to business rules, public contracts, scope, permissions or
+   destructive actions do.
+9. **Docs are routed.** An AGENTS.md context map or a skill sends each kind of task
    straight to the doc that holds its rules. Agents find docs by following citations
-   and often read only the first lines of a doc reached through another, so a doc
-   nothing routes to is maintained and never read. Garden flags it, including in CI.
+   and often read only the first lines of a doc reached through another, so a context
+   map row points at the doc itself, and a doc reached through another doc is one that
+   doc names for a specific case. A doc no chain of citations reaches is maintained and
+   never read; garden flags it, including in CI.
 
 ## Rules for the whole run
 
@@ -66,7 +75,8 @@ Apply these to every file you write.
   the task file and the read-only discovery is written before them.
 - Write a file only when it is absent. When it exists, show the diff you would make and
   leave it alone; the user decides. A file this run created may be revised until the
-  run's commit. Framework files from an earlier version of this framework (an old
+  run's commit. Kit files belong to the installer (step 2): it merges against the
+  recorded kit revision and reports conflicts instead of overwriting. Framework files from an earlier version of this framework (an old
   verifier, a CLAUDE.md adapter, renamed scripts) are the exception: propose replacing
   or removing them, and act on approval.
 - Never edit a file inside a codebase's clone as part of the setup. A team's AI files
@@ -78,7 +88,8 @@ Apply these to every file you write.
 - Keep progress in `ai/tasks/setup-<product>.md` with a `Target:` line, so an
   interrupted run resumes where it stopped.
 - Script exit codes: 0 pass, 1 findings or failure, 2 could not run. Exit 2 is never a
-  pass. Hooks never exit 2: Claude treats 2 as blocking.
+  pass. `check_code.py` also exits 3 for DEGRADED (only a `baseline_failing` gate
+  failed), which is not a pass either. Hooks never exit 2: Claude treats 2 as blocking.
 - Run this setup in Claude Code. Codex's default sandbox cannot write `.codex/`,
   `.agents/` or `.git/`. The user runs the few Codex steps marked as theirs.
 - No `<PLACEHOLDER>` may remain in a written file.
@@ -104,7 +115,7 @@ Apply these to every file you write.
 ├── ai/scripts/, tests/             verifier, garden, profile, check runner, format hook
 └── <product>/                      a workspace; launch here for product work
     ├── AGENTS.md                   product rules, <= 5 KB
-    ├── workspace.toml              profile: remote, gates, formatters
+    ├── workspace.toml              profile: remote (or local_only), gates, formatters
     ├── mise.toml                   toolchain pins, when not uv-managed Python
     ├── .claude/settings.json       product deny rules, hooks, own memory folder
     ├── .codex/rules/<product>.rules
@@ -119,15 +130,17 @@ with user-level ones.
 
 **Launch rule:** start sessions in a workspace for product work, and at the framework
 root for framework work. Never start one inside `repo/` or a lane: there, neither tool
-loads the workspace's deny rules or hooks.
+loads the workspace's deny rules or hooks (Claude still loads the AGENTS.md files above
+it, Codex does not, which makes the missing guards easy to miss).
 
 How the tools load this, as of the date above (step 9 checks it):
 
 - **Claude Code** reads `.claude/settings.json` from the launch folder only. It loads
   skills from the launch folder up to the git root. It reads AGENTS.md files natively
-  from the launch folder upward, but only while no CLAUDE.md is at or above it. That
-  needs version 2.1.277 or later, and the built-in agents-md plugin's `instructionFiles`
-  option at its default, `claude-md-or-agents-md`.
+  from the launch folder upward, but only while no CLAUDE.md, `.claude/CLAUDE.md` or
+  CLAUDE.local.md is at or above it. That needs version 2.1.277 or later, and the
+  built-in plugin `cc-plugin-agents-md@builtin`'s `instructionFiles` option at its
+  default, `claude-md-or-agents-md`; project settings cannot change that option.
 
   A CLAUDE.md with `@AGENTS.md` fails from a workspace: an import from outside the
   launch folder is skipped in headless runs. So write no CLAUDE.md. A team's
@@ -137,7 +150,8 @@ How the tools load this, as of the date above (step 9 checks it):
   32 KiB combined. It never loads a nested CLAUDE.md, so the workspace AGENTS.md tells
   it to read the team's. Project hooks and `.codex` config apply only once the user
   trusts the project. Hooks are trusted by hash, so editing `hooks.json` needs trust
-  again.
+  again. Codex hooks have no `if` or `onFailure` and fail open, so the kit's Codex hooks
+  are conveniences (garden, formatting), never enforcement.
 - **HTML comments** in AGENTS.md reach the model in both tools (probed with Claude
   2.1.296 and codex-cli 0.162.1). Keep provenance comments short.
 
@@ -153,7 +167,8 @@ Ask in one message:
   a yes).
 
 If the framework already exists (AGENTS.md and `ai/scripts/` present), skip to step 4
-for this product. Steps 1-3 then only report differences from the kit.
+for this product. Step 2 then reruns the installer, which updates kit files and merges
+local edits; steps 1 and 3 only report differences.
 
 ## Step 1: Framework skeleton
 
@@ -165,9 +180,11 @@ for this product. Steps 1-3 then only report differences from the kit.
 
 ## Step 2: Install the kit
 
-1. Copy `<kit>/files/` into the framework, file by file, under the rule for existing
-   files. Rename each `__P__-*` skill folder to `<p>-*` and replace `__P__` with `<p>`
-   in every copied file.
+1. Install the kit with `<kit>/install.py` (its docstring is the contract): run
+   `uv run --isolated --no-config --no-project --python ">=3.11" <kit>/install.py --framework <framework> --prefix <p> --dry-run`,
+   show the user the plan, then run it without `--dry-run`. Commit `.kit-install.toml`
+   and keep the kit clone; later updates merge against the revision it records. Resolve
+   each `*.kit-conflict-*` sidecar with the user and rerun until it exits 0.
 2. With an earlier framework on this machine, diff its scripts and docs against the
    kit's, and list what it has that the kit lacks. Offer each difference; never port
    wholesale.
@@ -181,17 +198,18 @@ What the kit holds, and the failure each part prevents:
 
 | Part | Size | Prevents |
 |---|---|---|
-| `workspace_profile.py` | 185 | scripts reading `workspace.toml` differently |
-| `check_code.py lint\|test` | 271 | gates run in the wrong checkout, or skipped without anyone seeing |
-| `verify_agent_env.py` | 789 | structural drift: missing docs, broken skills, budgets, placeholders, unanchored hooks |
-| `garden.py` | 1209 | context rot: dead paths and commands, changed declared dependencies, stale task lists and lanes, unrouted docs, deny rules naming renamed files, tool versions the probes have not seen |
-| `format_changed.py` | 171 | formatting-only CI failures after agent edits |
-| `cross_review.py`, `cross-review` | 609 | Claude commits and plans landing without an independent Codex review of exactly that content |
-| `work-management`, `plan-review` | 72 | multi-session work lost to compaction; unchecked plans |
-| `pre-land-review` | 54 | docs the change made wrong, older drift, over-building, cross-lane copies |
-| `maintenance` | 31 | stale claims, rules the tools stopped honouring, rules nothing needs |
-| `workspace-setup` | 248 | steps 4-10, for later products and new machines |
-| `agent_docs.md`, `skill_authoring.md`, `context_evaluation.md` | 112 | docs agents cannot use; skills that restate their docs; unmeasured context changes |
+| `install.py` (kit side) | 415 | kit fixes with no reliable path into an installed framework; local edits overwritten by an update |
+| `workspace_profile.py` | 278 | scripts reading `workspace.toml` differently |
+| `check_code.py lint\|test` | 361 | gates run in the wrong checkout or with the framework's tools, hung, skipped unseen, or a known failure hiding new ones |
+| `verify_agent_env.py` | 794 | structural drift: missing docs, broken skills, budgets, placeholders, unanchored hooks |
+| `garden.py` | 1210 | context rot: dead paths and commands, changed declared dependencies, stale task lists and lanes, unrouted docs, deny rules naming renamed files, tool versions the probes have not seen |
+| `format_changed.py` | 185 | formatting-only CI failures after agent edits |
+| `cross_review.py`, `cross-review` | 967 | Claude commits and plans landing without an independent Codex review of exactly that content, including content a Git hook changed during the commit |
+| `work-management`, `plan-review` | 130 | multi-session work lost to compaction; unchecked plans; approval requests for routine adjustments; unbounded unattended runs |
+| `pre-land-review` | 68 | unreviewed commits, secrets, docs the change made wrong, older drift, over-building, cross-lane copies |
+| `maintenance` | 37 | stale claims, rules the tools stopped honouring, rules nothing needs, kit updates applied by hand |
+| `workspace-setup` | 282 | steps 4-10, for later products and new machines |
+| `agent_docs.md`, `skill_authoring.md`, `context_evaluation.md` | 123 | docs agents cannot use; skills that restate their docs; unmeasured context changes |
 | hooks, pre-commit, CI | | stale state unseen at session start; drift reaching main |
 
 Each script's docstring states its contract. `docs/dev/architecture.md` (step 3) says
@@ -221,7 +239,7 @@ These sections are required, in this order (the verifier checks the headings):
     `uv run --locked python ai/scripts/check_code.py lint|test --profile <product>/workspace.toml`;
   - "Launch product work in its workspace; the clone is `<workspace>/repo`; git run on
     the workspace folder acts on the framework";
-  - "Exit 0 pass, 1 failed, 2 could not run; 2 is never a pass";
+  - "Exit 0 pass, 1 failed, 2 could not run, 3 degraded (gates); only 0 is a pass";
   - "When the session summary lists findings, mention them once and offer the fix."
 - **`## Verify your work`:** "Read the tests, call sites and nearby patterns first; ask
   when ambiguity would change behaviour, APIs, data or dependencies. Make the smallest
@@ -281,12 +299,19 @@ maintenance can tell which rules still earn their place.
   `<p>-workspace-setup` skill for each workspace to restore its clone); and the launch
   rule.
 - **`.secrets.baseline`:** after `git add -N .` (the scan covers files git knows), run
-  `detect-secrets scan --exclude-files '(\.venv|uv\.lock)' --exclude-lines 'verified_commit = "[0-9a-f]{40}"' > .secrets.baseline`; then
-  `pre-commit run detect-secrets --all-files` must pass.
+  `uv run --locked detect-secrets scan --exclude-files '(\.venv|uv\.lock)' --exclude-lines 'verified_commit = "[0-9a-f]{40}"' > .secrets.baseline`.
+  The hook passes every finding in the baseline, even one marked real, so the baseline
+  may hold only audited false positives. Show the user each entry
+  (`uv run --locked detect-secrets audit --report .secrets.baseline`). Take a real
+  secret out of the file, tell the user to rotate it, and rescan. Mark a false
+  positive, on the user's word, by setting its `"is_secret": false`. Then
+  `uv run --locked pre-commit run detect-secrets --all-files` and
+  `uv run --locked pre-commit run detect-secrets-audited --all-files` must pass; the
+  second fails while any entry is not an audited false positive.
 
 Write a language guide (`docs/guidelines/<lang>/`, at most 200 lines, with a
-`<p>-<lang>` skill) only for conventions a product's linters do not enforce. If it would
-have fewer than about 30 lines of real content, skip it.
+`<p>-<lang>` skill) only for conventions a product's linters do not enforce and agents
+have actually got wrong; record the failure each rule prevents.
 
 ## Steps 4-10: the workspace
 
@@ -323,19 +348,27 @@ Each of these was tried or evaluated, and rejected:
 - a CLAUDE.md adapter;
 - instruction files over budget;
 - directory tours;
-- a markdown file per code folder, or doc chains more than one hop from AGENTS.md;
+- a markdown file per code folder, or context-map rows that point at an index instead
+  of the doc;
 - copies of linter rules in prose;
 - per-commit human approval or a push guard, unless step 5's answers ask for one
   (the Codex review of Claude's commits is required by default);
-- `ask` permission rules;
+- `ask` permission rules (auto mode still prompts for them, and `-p` turns them into
+  denials);
 - launcher scripts;
-- sandbox or credential-isolation layers beyond the deny rules;
-- GitHub, Playwright or memory MCP servers (use `gh` and the built-ins);
+- claims of isolation the setup lacks: deny rules on file tools are not process
+  isolation, and Claude's sandbox covers Bash only (hooks, MCP and language servers run
+  outside it). Enable the sandbox or a separate credential scope only with that
+  boundary written down;
+- integrations by default: each is offered by stack in
+  `docs/agent-workflows/workspace-setup.md` step 5 and adopted only with its record;
+  GitHub, Serena and memory MCP servers duplicate `gh` and the built-ins;
 - plugins that duplicate built-ins (code-review, simplify);
 - skill mega-packs or self-generated skills;
 - self-updating third-party tools;
 - auto-applied AI rewrites of docs;
 - hash manifests;
-- unattended agent loops (the Codex review loop runs inside a session and goes to the user on disagreement);
+- a home-grown orchestration loop: unattended runs use `claude -p` with external limits
+  and deterministic acceptance (`docs/agent-workflows/work-management.md`);
 - a skill whose body restates its canonical doc;
 - framework files in a product repo.

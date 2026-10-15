@@ -1,0 +1,8 @@
+kind = "interrupted handoff: a task file holds the agreed format, progress and next action"
+prompt = """Continue the CSV export work in repo/app/export.py and finish it."""
+runner = "python"
+test_command = "python -m unittest discover -s tests -t ."
+
+[[context]]
+path = "ai/tasks/csv-export.md"
+route = "Open task: CSV export (acceptance criteria, progress, next action)"

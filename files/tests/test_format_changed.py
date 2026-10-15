@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -31,6 +32,7 @@ def make_framework(root: Path, real_tools: bool = False) -> Path:
     for checkout in (workspace / "repo", workspace / ".worktrees" / "lane"):
         checkout.mkdir(parents=True)
         (checkout / ".git").write_text("gitdir: elsewhere\n", encoding="utf-8")
+        (checkout / "uv.lock").write_text("version = 1\n", encoding="utf-8")
     if real_tools:
         for name in ("pyproject.toml", "uv.lock"):
             shutil.copy(FW / name, root / name)
@@ -227,3 +229,49 @@ def test_script_runs_standalone(tmp_path: Path) -> None:
     assert (done.returncode, done.stderr) == (0, "")
     done = subprocess.run([sys.executable, str(script)], input="{", capture_output=True, text=True)
     assert done.returncode == 1
+
+
+def test_ruff_without_uv_lock_fails_clearly(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = make_framework(tmp_path / "fw")
+    log = fake_uv(tmp_path, monkeypatch)
+    (root / "shop" / "repo" / "uv.lock").unlink()
+    (root / "shop" / "repo" / "a.py").write_text("x=1\n", encoding="utf-8")
+    assert format_changed.run(edit("shop/repo/a.py", root), root) == 1
+    assert "has no uv.lock; use [[format]]" in capsys.readouterr().err
+    assert not log.exists()
+
+
+def test_format_command_from_profile(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A [[format]] command runs on its suffixes with the product's tool, not the framework's."""
+    root = make_framework(tmp_path / "fw").resolve()
+    log = fake_uv(tmp_path, monkeypatch)
+    (root / "shop" / "workspace.toml").write_text(
+        'name = "shop"\nremote = "x"\nformatters = ["ruff"]\n'
+        '[[format]]\nargv = ["fmt", "--write", "{file}"]\nsuffixes = [".ts", ".py"]\n',
+        encoding="utf-8",
+    )
+    framework = tmp_path / "fw-venv"
+    for folder, who in ((framework / "bin", "FRAMEWORK"), (tmp_path / "product", "PRODUCT")):
+        folder.mkdir(parents=True)
+        (folder / "fmt").write_text(
+            f'#!/bin/sh\necho "{who}|$PWD|$*" >> "{log}"\n', encoding="utf-8"
+        )
+        (folder / "fmt").chmod(0o755)
+    path = [str(framework / "bin"), str(tmp_path / "product"), os.environ["PATH"]]
+    monkeypatch.setenv("PATH", os.pathsep.join(path))
+    monkeypatch.setattr(sys, "prefix", str(framework))
+    clone = root / "shop" / "repo"
+    for name in ("a.ts", "b.py", "c.md"):
+        (clone / name).write_text("x\n", encoding="utf-8")
+    for name in ("a.ts", "b.py", "c.md"):
+        assert format_changed.run(edit(clone / name, root), root) == 0
+    assert log.read_text(encoding="utf-8").splitlines() == [
+        f"PRODUCT|{clone}|--write {clone / 'a.ts'}",
+        f"{clone}|unset|run --frozen ruff format {clone / 'b.py'}",
+        f"PRODUCT|{clone}|--write {clone / 'b.py'}",
+    ]
+    capsys.readouterr()

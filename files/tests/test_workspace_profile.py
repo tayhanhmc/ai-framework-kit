@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import sys
 from pathlib import Path
 
 import pytest
@@ -21,17 +23,26 @@ def test_load_full_profile_expands_workspace(tmp_path: Path) -> None:
         'clone = "src"\ndefault_branch = "trunk"\nformatters = ["ruff"]\n'
         'baseline_failing = ["types"]\n'
         '[[lint]]\nname = "types"\nargv = ["tool", "--config={workspace}/cfg"]\n'
-        '[[test]]\nname = "unit"\nargv = ["pytest"]\n'
+        '[[test]]\nname = "unit"\nargv = ["pytest"]\ntimeout = 60\n'
+        '[[format]]\nargv = ["fmt", "--cfg={workspace}/f", "{file}"]\nsuffixes = [".ts"]\n'
     )
     profile = wp.load_profile(write_profile(tmp_path, body))
     workspace = (tmp_path / "shop").resolve()
     assert profile.workspace == workspace
+    assert profile.remote == "git@example.com:shop.git"
     assert profile.clone == workspace / "src"
     assert profile.default_branch == "trunk"
-    assert profile.formatters == ("ruff",)
+    custom = wp.Formatter(("fmt", f"--cfg={workspace}/f", "{file}"), (".ts",))
+    assert profile.formatters == (wp.RUFF, custom)
     assert profile.baseline_failing == ("types",)
     assert profile.gates("lint") == (wp.Gate("types", ("tool", f"--config={workspace}/cfg")),)
-    assert profile.gates("test")[0].name == "unit"
+    assert profile.gates("lint")[0].timeout == wp.DEFAULT_GATE_TIMEOUT
+    assert profile.gates("test") == (wp.Gate("unit", ("pytest",), 60),)
+
+
+def test_local_only_repository(tmp_path: Path) -> None:
+    profile = wp.load_profile(write_profile(tmp_path, 'name = "shop"\nlocal_only = true\n'))
+    assert profile.remote is None
 
 
 def test_defaults(tmp_path: Path) -> None:
@@ -39,7 +50,8 @@ def test_defaults(tmp_path: Path) -> None:
     assert profile.clone.name == "repo"
     assert profile.default_branch == "main"
     assert profile.lint == profile.test == ()
-    assert profile.formatters == profile.baseline_failing == ()
+    assert profile.formatters == ()
+    assert profile.baseline_failing == ()
 
 
 def test_unknown_gate_kind(tmp_path: Path) -> None:
@@ -54,17 +66,33 @@ def test_unknown_gate_kind(tmp_path: Path) -> None:
         (BASE + 'colne = "repo"\n', "unknown keys \\['colne'\\]"),
         ('remote = "x"\n', "`name` must be a non-empty string"),
         ('name = "other"\nremote = "x"\n', "differs from folder"),
-        ('name = "shop"\n', "`remote` must be a non-empty string"),
+        ('name = "shop"\n', "`remote` must be a non-empty string \\(or set `local_only"),
+        ('name = "shop"\nlocal_only = false\n', "`remote` must be a non-empty string"),
+        (BASE + "local_only = true\n", "`local_only = true` and `remote` exclude each other"),
+        ('name = "shop"\nlocal_only = "yes"\n', "`local_only` must be true or false"),
         (BASE + "formatters = [1]\n", "`formatters` must be a list"),
         (BASE + 'formatters = ["black"]\n', "unknown formatter 'black'"),
         (BASE + 'baseline_failing = ["ghost"]\n', "unknown gate 'ghost'"),
         (BASE + 'lint = "ruff"\n', "must be an array of tables"),
-        (BASE + '[[lint]]\nname = "a"\n', "exactly `name` and `argv`"),
+        (BASE + '[[lint]]\nname = "a"\n', "must have `name` and `argv`"),
+        (BASE + '[[lint]]\nname = "a"\nargv = ["x"]\nnice = 1\n', "optionally `timeout`"),
+        (BASE + '[[test]]\nname = "a"\nargv = ["x"]\ntimeout = 0\n', "positive integer"),
+        (BASE + '[[test]]\nname = "a"\nargv = ["x"]\ntimeout = true\n', "positive integer"),
+        (BASE + '[[test]]\nname = "a"\nargv = ["x"]\ntimeout = 1.5\n', "positive integer"),
+        (BASE + '[[format]]\nargv = ["f", "{file}"]\n', "exactly `argv` and `suffixes`"),
+        (BASE + '[[format]]\nargv = ["f"]\nsuffixes = [".ts"]\n', "must contain `{file}`"),
+        (BASE + '[[format]]\nargv = ["{file}"]\nsuffixes = []\n', "`suffixes` must be"),
+        (BASE + '[[format]]\nargv = ["{file}"]\nsuffixes = ["ts"]\n', "`suffixes` must be"),
+        (BASE + "format = [1]\n", "must be an array of tables"),
         (BASE + '[[lint]]\nname = "a"\nargv = []\n', "`argv` is empty"),
         (BASE + '[[lint]]\nname = "a"\nargv = [""]\n', "list of non-empty strings"),
         (
             BASE + '[[lint]]\nname = "a"\nargv = ["x"]\n[[lint]]\nname = "a"\nargv = ["y"]\n',
             "duplicate gate name 'a'",
+        ),
+        (
+            BASE + '[[lint]]\nname = "a"\nargv = ["x"]\n[[test]]\nname = "a"\nargv = ["y"]\n',
+            "duplicate gate name 'a' \\(unique across lint and test\\)",
         ),
         (BASE + "name = \n", "invalid TOML"),
     ],
@@ -132,3 +160,26 @@ def test_main_exit_codes(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> 
     assert wp.main([str(bad), str(tmp_path / "missing.toml")]) == 2
     assert wp.main([]) == 2
     assert "usage" in capsys.readouterr().err
+
+
+def test_product_env_drops_only_the_framework_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    running, active, user = tmp_path / "fw-venv", tmp_path / "active", tmp_path / "user"
+    monkeypatch.setattr(sys, "prefix", str(running))
+    path = [str(running / "bin"), str(user / "bin"), str(active / "bin"), "", "/usr/bin"]
+    monkeypatch.setenv("PATH", os.pathsep.join(path))
+    monkeypatch.setenv("VIRTUAL_ENV", str(active))
+    monkeypatch.setenv("UV_PROJECT_ENVIRONMENT", str(running))
+    env = wp.product_env()
+    assert env["PATH"] == os.pathsep.join([str(user / "bin"), "", "/usr/bin"])
+    assert "VIRTUAL_ENV" not in env and "UV_PROJECT_ENVIRONMENT" not in env
+    monkeypatch.setenv("UV_PROJECT_ENVIRONMENT", ".venv-product")
+    assert wp.product_env()["UV_PROJECT_ENVIRONMENT"] == ".venv-product"
+
+
+def test_product_env_outside_a_venv_keeps_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sys, "prefix", sys.base_prefix)
+    monkeypatch.delenv("VIRTUAL_ENV", raising=False)
+    monkeypatch.setenv("PATH", os.pathsep.join([f"{sys.base_prefix}/bin", "/usr/bin"]))
+    assert wp.product_env()["PATH"] == os.pathsep.join([f"{sys.base_prefix}/bin", "/usr/bin"])

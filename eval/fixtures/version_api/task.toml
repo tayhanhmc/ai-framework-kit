@@ -1,0 +1,12 @@
+kind = "version-sensitive API (installed packaging 26.3 lacks the widely known LegacyVersion API)"
+prompt = """In repo/, `latest_stable` in app/releases.py crashes since the dependency upgrade. Fix it so it returns the original tag string of the highest final release, skipping tags that are not valid versions."""
+runner = "uv"
+test_command = "uv run --frozen python -m unittest discover -s tests -t ."
+
+[[context]]
+path = "docs/dependencies.md"
+route = "Pinned dependency versions and their API differences"
+
+[[checks]]
+type = "unchanged"
+paths = ["pyproject.toml", "uv.lock"]

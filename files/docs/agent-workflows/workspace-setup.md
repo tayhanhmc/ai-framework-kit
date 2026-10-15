@@ -21,7 +21,7 @@ Record the answers in `ai/tasks/setup-<product>.md` with a `Target:` line.
    only when `repo/` is missing.
 
    **New project:** `git init -b main <product>/repo`. Add the remote if one was
-   created.
+   created; without one, the profile says `local_only = true` instead of `remote`.
 2. Record each answer below in the task file, with evidence (`file:line` or command
    output). For a new project most are empty; note that.
    - **Repository:** its remote, default branch and HEAD. Read
@@ -58,7 +58,22 @@ Ask about all of these at once:
   message format; AI co-author trailers;
 - how the team's AI layer is used;
 - any new machine dependency (uv, mise, a runtime);
-- for a new project: the toolchain and scaffold (step 6).
+- for a new project: the toolchain and scaffold (step 6);
+- optional integrations that fit the stack, none by default <!-- added 2026-10-14: integrations were banned or bulk-installed without evidence -->. Offer only those whose
+  failure the product shows, each with its probe:
+  - typed code: the official language-server plugin (Pyright for Python); CI's type
+    check stays authoritative;
+  - declared layer rules: Import Linter (Python) or dependency-cruiser (JS) as a gate,
+    shown to fail on a seeded violation;
+  - web UI: Playwright's CLI and skills; deterministic browser tests stay authoritative;
+  - security rules the linters miss: the Semgrep CLI with local rules and
+    `--metrics=off`;
+  - version-sensitive libraries: Context7's CLI, after reading the installed version
+    from the lockfile.
+
+  Record each adopted one in `docs/dev/decisions.md`: the failure it addresses, upstream
+  and pinned version, configuration scope, what data it sends where, its probe, and how
+  to update or remove it.
 
 After this, ask only about a gate that fails on the default branch, and at step 8.
 
@@ -83,11 +98,18 @@ After this, ask only about a gate that fails on the default branch, and at step 
 
 Then write `<product>/workspace.toml`:
 - Use the team's package scripts over raw tool calls.
+- Gate names are unique across `[[lint]]` and `[[test]]`. A gate gets `timeout`
+  seconds (default 1800), then its whole process group is stopped (SIGTERM, SIGKILL 5 s later) and it fails; set it
+  above the gate's normal run time.
 - Ruff and pytest search parent folders for config. If the repo has none of its own,
   they read the framework's `pyproject.toml`, so pin them: Ruff
   `--config pyproject.toml` (`--isolated` if the file is absent), pytest
   `-c pyproject.toml`.
-- List a formatter only if the repo has its own config for it.
+- List a formatter only if the repo has its own config for it. `formatters = ["ruff"]`
+  runs `uv run --frozen ruff format`, so it needs a uv-managed checkout (`uv.lock`).
+  Otherwise add a `[[format]]` with the project's own command and the suffixes it
+  handles: `argv = ["mise", "exec", "--", "npx", "prettier", "--write", "{file}"]`,
+  `suffixes = [".ts", ".tsx"]`.
 
 Validate the profile before anything else by loading it through `workspace_profile.py`.
 The full verifier needs step 7's files, so it runs in step 9.
@@ -95,8 +117,14 @@ The full verifier needs step 7's files, so it runs in step 9.
 Run each gate on the default branch with `check_code.py`. If a gate fails, rerun it in a
 clone outside the framework (`mktemp -d`):
 - If it passes there, the framework's layout causes the failure: fix the pinning.
-- If it fails in both, ask: must pass, or `baseline_failing` (which tolerates only
-  exit 1, never a crash or usage error).
+- If it fails in both, ask: must pass, or quarantine the known failures in the gate's
+  own argv so it passes and any new failure fails: pytest `--deselect <node id>` per
+  failing test, a linter's per-file exclude or ignore for the failing files. Record each
+  quarantined item in the task file and the workspace AGENTS.md.
+- Only when the failures cannot be named that narrowly, list the gate in
+  `baseline_failing`. Its exit 1 then hides new failures in that gate, so `check_code.py`
+  reports the run DEGRADED with exit 3, never PASS; any other exit code or a timeout
+  fails.
 
 Record each gate's result and its run time.
 
@@ -113,8 +141,9 @@ Write each file only when it is absent.
     team's CLAUDE.md, since it never loads one), the commit style, commands agents never
     run, and team tools that are not available here;
   - gates: `uv run --project .. --locked python ../ai/scripts/check_code.py lint`, and <!-- garden: ignore -->
-    `test`, with `--target .worktrees/<lane>` for a lane; known baseline failures; the
-    pre-land review before a PR or a push to the default branch;
+    `test`, with `--target .worktrees/<lane>` for a lane; quarantined and baseline
+    failures (exit 3, DEGRADED, is not a pass); the pre-land review before a PR or a
+    push to the default branch;
   - `## Docs`: "Record rules the code cannot show (business rules, external
     constraints) in `docs/`, written by `../docs/guidelines/agent_docs.md`; read it <!-- garden: ignore -->
     before writing or editing a doc. Give each new doc a context-map row.";
@@ -231,18 +260,20 @@ note it.
    `docs/dev/tool-probes.md`:
 
    ```
-   git ls-files -co --exclude-standard | grep -v -e '^ai/tasks/' -e '^docs/dev/tool-probes.md$' | xargs shasum -a 256 > <scratch>/first
+   git ls-files -z -co --exclude-standard | grep -z -v -e '^ai/tasks/' -e '^docs/dev/tool-probes.md$' | xargs -0 shasum -a 256 > <scratch>/first
    ```
 
-2. Rerun steps 4-7 (on a first setup, the prompt's steps 1-3 too), reusing the task
-   file's answers (no new questions). Then hash again into `<scratch>/second`. The two
+2. Rerun steps 4-7 (on a first setup, the prompt's steps 1-3 too; the installer must
+   report no file changes and exit 0), reusing the task file's answers (no new
+   questions). Then hash again into `<scratch>/second`. The two
    must be identical. A file the user edited between the runs keeps their edit.
 3. Archive the task file to `ai/archive/setup-<product>/tasks/`.
 4. Offer one commit of the framework files, listed by explicit path (never
    `git add -A`). Push only when asked. The Codex checkpoint reviews it like any
    commit; on a first setup that is the whole kit. Fix findings in files this setup
-   wrote. Findings in kit files copied unchanged go to the user, who decides whether to
-   commit by hand or fix the kit first.
+   wrote. Findings in kit files installed unchanged go to the user, who decides whether
+   to commit by hand or fix the kit first. The commit includes `.kit-install.toml` and
+   `.secrets.baseline`; no `*.kit-conflict-*` file may remain.
 5. Report:
    - what was built;
    - the verification evidence;

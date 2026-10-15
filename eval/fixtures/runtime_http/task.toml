@@ -1,0 +1,9 @@
+kind = "runtime behaviour: a tiny HTTP service that must be started, exercised and stopped"
+prompt = """In repo/, creating a note with POST /notes and then fetching it with GET /notes/<id> using the returned id gives 404. Fix the service."""
+runner = "python"
+test_command = "python -m unittest discover -s tests -t ."
+runtime = true
+
+[[context]]
+path = "docs/runtime.md"
+route = "Running the notes service locally: port, readiness, shutdown"

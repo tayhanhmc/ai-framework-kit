@@ -24,6 +24,22 @@ repos:
         entry: uv run --locked detect-secrets-hook --baseline .secrets.baseline --exclude-lines 'verified_commit = "[0-9a-f]{40}"'
         language: unsupported
         exclude: ^(uv\.lock|\.secrets\.baseline)$
+      # detect-secrets-hook passes every finding already in the baseline, even one audited
+      # as real, so the baseline may hold only findings audited as false positives.
+      - id: detect-secrets-audited
+        name: secrets baseline holds only audited false positives
+        entry: >-
+          uv run --isolated --no-config --no-project --python ">=3.11" -- python -c
+          "import json, sys;
+          results = json.load(open('.secrets.baseline'))['results'];
+          bad = ['%s:%s %s' % (f, s['line_number'], s['type'])
+          for f, found in results.items() for s in found if s.get('is_secret') is not False];
+          print(*('.secrets.baseline: %s is not audited as a false positive' % b for b in bad),
+          sep='\n');
+          sys.exit(1 if bad else 0)"
+        language: unsupported
+        pass_filenames: false
+        always_run: true
       - id: check-added-large-files
         name: check added large files
         entry: uv run --locked check-added-large-files --maxkb 512

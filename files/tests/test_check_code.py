@@ -1,8 +1,13 @@
 from __future__ import annotations
 
 import json
+import os
+import shutil
+import signal
 import subprocess
 import sys
+import textwrap
+import time
 from pathlib import Path
 
 import pytest
@@ -68,15 +73,31 @@ def test_failure_exits_1_and_runs_every_gate(
     assert "lint: FAIL (2 ran; 1 passed; failed: bad)" in out
 
 
-def test_baseline_failure_only_warns(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_baseline_failure_is_degraded_never_pass(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     failing = [sys.executable, "-c", "import sys; sys.exit(1)"]
     gates = gate("old", failing) + gate("fixed", PASS)
     ws = make_workspace(tmp_path, gates, 'baseline_failing = ["old", "fixed"]\n')
-    assert check_code.run(["lint"], cwd=ws) == 0
+    assert check_code.run(["lint"], cwd=ws) == 3
     out = capsys.readouterr().out
-    assert "<-- old: FAIL (exit 1), baseline: warning only" in out
+    assert "<-- old: FAIL (exit 1), in baseline_failing: DEGRADED" in out
     assert "fixed: PASS (listed in baseline_failing; remove it from the profile)" in out
-    assert "baseline warnings: old" in out
+    assert out.splitlines()[-1].startswith(
+        "lint: DEGRADED (2 ran; 1 passed; baseline failures (degraded): old)"
+    )
+
+
+def test_new_failure_beside_baseline_fails(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    failing = [sys.executable, "-c", "import sys; sys.exit(1)"]
+    gates = gate("old", failing, "test") + gate("new", failing, "test")
+    ws = make_workspace(tmp_path, gates, 'baseline_failing = ["old"]\n')
+    assert check_code.run(["test"], cwd=ws) == 1
+    assert "test: FAIL (2 ran; 0 passed; failed: new; baseline failures (degraded): old)" in (
+        capsys.readouterr().out
+    )
 
 
 def test_skip_is_printed_and_unknown_skip_fails(
@@ -128,14 +149,14 @@ def test_gate_that_cannot_start_exits_2(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     ws = make_workspace(tmp_path, gate("one", PASS))
-    real_run = subprocess.run
+    real_popen = subprocess.Popen
 
-    def fake_run(argv: list[str], **kwargs: object) -> object:
+    def fake_popen(argv: list[str], **kwargs: object) -> object:
         if argv[0] == sys.executable:
             raise PermissionError("denied")
-        return real_run(argv, **kwargs)  # type: ignore[call-overload]
+        return real_popen(argv, **kwargs)  # type: ignore[call-overload]
 
-    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr(subprocess, "Popen", fake_popen)
     assert check_code.run(["lint"], cwd=ws) == 2
     assert "gate one did not run: denied" in capsys.readouterr().err
 
@@ -276,3 +297,169 @@ def test_target_from_another_repository_is_refused(
     scratch = tmp_path / "scratch"
     git(tmp_path, "clone", "-q", str(ws / "repo"), str(scratch))
     assert check_code.run(["lint", "--target", str(scratch)], cwd=ws) == 0
+
+
+def test_local_only_profile_keeps_identity_check(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    ws = make_workspace(tmp_path, gate("one", PASS))
+    (ws / "workspace.toml").write_text(f'name = "shop"\nlocal_only = true\n{gate("one", PASS)}')
+    assert check_code.run(["lint"], cwd=ws) == 0
+    lane = ws / ".worktrees" / "lane"
+    git(ws / "repo", "worktree", "add", "-q", "--detach", str(lane))
+    assert check_code.run(["lint", "--target", str(lane)], cwd=ws) == 0
+    scratch = tmp_path / "scratch"
+    git(tmp_path, "clone", "-q", str(ws / "repo"), str(scratch))
+    assert check_code.run(["lint", "--target", str(scratch)], cwd=ws) == 0
+    capsys.readouterr()
+    other = tmp_path / "other"
+    other.mkdir()
+    git(other, "init", "-q")
+    git(other, "remote", "add", "origin", "x")
+    assert check_code.run(["lint", "--target", str(other)], cwd=ws) == 2
+    assert "not a checkout of shop" in capsys.readouterr().err
+    bare = tmp_path / "bare"  # No origin at all, run from inside the clone.
+    bare.mkdir()
+    git(bare, "init", "-q")
+    assert check_code.run(["lint", "--target", str(bare)], cwd=ws / "repo") == 2
+    relative = tmp_path / "relative"  # Origin given relative to the target.
+    git(tmp_path, "clone", "-q", str(ws / "repo"), str(relative))
+    git(relative, "remote", "set-url", "origin", os.path.relpath(ws / "repo", relative))
+    assert check_code.run(["lint", "--target", str(relative)], cwd=ws / "repo") == 0
+
+
+def tool(folder: Path, name: str, says: str) -> None:
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / name).write_text(f"#!/bin/sh\necho {says}\n", encoding="utf-8")
+    (folder / name).chmod(0o755)
+
+
+def test_framework_environment_does_not_leak(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str]
+) -> None:
+    """A framework venv first on PATH (as `uv run` puts it) must not supply product tools."""
+    uv_run = ["uv", "run", "--offline", "python", "-c", "import sys; print('env=' + sys.prefix)"]
+    gates = gate("tool", ["clash"]) + gate("uv", uv_run)
+    ws = make_workspace(tmp_path, gates)
+    (ws / "repo" / "pyproject.toml").write_text(
+        '[project]\nname = "shop"\nversion = "0"\nrequires-python = ">=3.11"\n'
+        "[tool.uv]\npackage = false\n",
+        encoding="utf-8",
+    )
+    framework = tmp_path / "fw-venv"
+    tool(framework / "bin", "clash", "FRAMEWORK")
+    tool(tmp_path / "product-bin", "clash", "PRODUCT")
+    uv = shutil.which("uv")
+    assert uv is not None
+    path = [str(framework / "bin"), str(tmp_path / "product-bin"), str(Path(uv).parent)]
+    monkeypatch.setenv("PATH", os.pathsep.join([*path, os.environ["PATH"]]))
+    monkeypatch.setattr(sys, "prefix", str(framework))
+    monkeypatch.setenv("VIRTUAL_ENV", str(framework))
+    monkeypatch.setenv("UV_PROJECT_ENVIRONMENT", str(framework))
+    assert check_code.run(["lint"], cwd=ws) == 0
+    out = capfd.readouterr().out
+    assert "PRODUCT" in out and "FRAMEWORK" not in out
+    assert f"env={(ws / 'repo' / '.venv').resolve()}" in out
+
+
+@pytest.mark.skipif(shutil.which("mise") is None, reason="mise is not installed")
+def test_mise_exec_gate_does_not_see_framework_tools(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capfd: pytest.CaptureFixture[str]
+) -> None:
+    ws = make_workspace(tmp_path, gate("mise", ["mise", "exec", "--", "clash"]))
+    framework = tmp_path / "fw-venv"
+    tool(framework / "bin", "clash", "FRAMEWORK")
+    tool(tmp_path / "product-bin", "clash", "PRODUCT")
+    path = [str(framework / "bin"), str(tmp_path / "product-bin"), os.environ["PATH"]]
+    monkeypatch.setenv("PATH", os.pathsep.join(path))
+    monkeypatch.setattr(sys, "prefix", str(framework))
+    assert check_code.run(["lint"], cwd=ws) == 0
+    out = capfd.readouterr().out
+    assert "PRODUCT" in out and "FRAMEWORK" not in out
+
+
+# A gate that starts a grandchild (which ignores SIGTERM), records its pid, and hangs.
+HANG = textwrap.dedent(
+    """
+    import signal, subprocess, sys, time
+    code = "import signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(600)"
+    child = subprocess.Popen([sys.executable, "-c", code])
+    open(sys.argv[1], "w").write(str(child.pid))
+    time.sleep(600)
+    """
+)
+
+
+def gone(pid: int, seconds: float = 10) -> bool:
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return True
+        time.sleep(0.05)
+    return False
+
+
+def test_timeout_kills_the_gate_group(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    pid_file = tmp_path / "pid"
+    hang = [sys.executable, "-c", HANG, str(pid_file)]
+    gates = gate("hang", hang) + "timeout = 1\n" + gate("after", PASS)
+    ws = make_workspace(tmp_path, gates, 'baseline_failing = ["hang"]\n')
+    monkeypatch.setattr(check_code, "GRACE_SECONDS", 0.5)
+    start = time.monotonic()
+    assert check_code.run(["lint"], cwd=ws) == 1
+    assert time.monotonic() - start < 30
+    out = capsys.readouterr().out
+    assert "<-- hang: TIMEOUT (killed after 1s)" in out
+    assert "<-- after: PASS" in out
+    assert "lint: FAIL (2 ran; 1 passed; failed: hang; timed out: hang)" in out
+    assert gone(int(pid_file.read_text()))
+
+
+def test_leftover_processes_are_killed_after_a_pass(tmp_path: Path) -> None:
+    pid_file = tmp_path / "pid"
+    code = "import subprocess, sys; open(sys.argv[1], 'w').write(str(subprocess.Popen("
+    code += "[sys.executable, '-c', 'import time; time.sleep(600)']).pid))"
+    ws = make_workspace(tmp_path, gate("leaves", [sys.executable, "-c", code, str(pid_file)]))
+    assert check_code.run(["lint"], cwd=ws) == 0
+    assert gone(int(pid_file.read_text()))
+
+
+def test_leftover_children_get_the_grace_period(tmp_path: Path) -> None:
+    marker = tmp_path / "cleaned"
+    child = (
+        "import pathlib, signal, sys, time\n"
+        "def stop(*_):\n"
+        "    time.sleep(0.3)\n"
+        "    pathlib.Path(sys.argv[1]).write_text('done')\n"
+        "    sys.exit(0)\n"
+        "signal.signal(signal.SIGTERM, stop)\n"
+        "time.sleep(600)\n"
+    )
+    code = "import subprocess, sys, time; subprocess.Popen([sys.executable, '-c', sys.argv[1],"
+    code += " sys.argv[2]]); time.sleep(0.5)"
+    argv = [sys.executable, "-c", code, child, str(marker)]
+    ws = make_workspace(tmp_path, gate("leaves", argv))
+    assert check_code.run(["lint"], cwd=ws) == 0
+    assert marker.read_text() == "done"  # Cleaned up on SIGTERM before any SIGKILL.
+
+
+@pytest.mark.parametrize("sig", [signal.SIGTERM, signal.SIGINT, signal.SIGHUP])
+def test_signal_interrupts_and_kills_the_gate_group(tmp_path: Path, sig: signal.Signals) -> None:
+    pid_file = tmp_path / "pid"
+    ws = make_workspace(tmp_path, gate("hang", [sys.executable, "-c", HANG, str(pid_file)]))
+    proc = subprocess.Popen(
+        [sys.executable, str(SCRIPT), "lint"], cwd=ws, stdout=subprocess.PIPE, text=True
+    )
+    deadline = time.monotonic() + 30
+    while not (pid_file.exists() and pid_file.read_text()) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    proc.send_signal(sig)
+    out, _ = proc.communicate(timeout=30)
+    assert proc.returncode == 2
+    assert "<-- hang: INTERRUPTED" in out
+    assert f"lint: INTERRUPTED by {sig.name} (exit 2)" in out
+    assert gone(int(pid_file.read_text()))
