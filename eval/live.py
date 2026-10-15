@@ -7,10 +7,14 @@ runner stops at. Sessions are not persisted (``--no-session-persistence``), user
 local settings are not loaded (``--setting-sources project``), no MCP servers load
 (``--strict-mcp-config``) and auto-memory is disabled by environment variable.
 
-Residual leakage, not prevented here: user-level instructions outside settings (for
-example ``~/.claude/CLAUDE.md``) may still load; the agent's Bash can read any path the
-user can, including this kit's ``eval/fixtures`` (hidden tests, solutions); the model
-API itself may cache prompts across trials (a cost effect, not shared memory).
+Trials run with a minimal environment (``TRIAL_ENV``), so credentials in the caller's
+environment (cloud keys, tokens) do not reach the agent. They are not sandboxed: the
+agent's Bash runs as the user, with network access, and can read any path the user can,
+including this kit's ``eval/fixtures`` (hidden tests, solutions), so ``run.py --live``
+requires ``--allow-unsandboxed-bash``. Run it on a machine and account where that is
+acceptable. Also not prevented: user-level instructions outside settings (for example
+``~/.claude/CLAUDE.md``) may load; the model API may cache prompts across trials (a cost
+effect, not shared memory).
 """
 
 from __future__ import annotations
@@ -27,6 +31,8 @@ from typing import Any
 from harness import run_bounded
 
 ALLOWED_TOOLS = "Read,Edit,Write,Glob,Grep,Bash"
+# What a trial inherits: enough to run tools and authenticate (macOS keychain via HOME).
+TRIAL_ENV = ("PATH", "HOME", "USER", "LOGNAME", "SHELL", "TMPDIR", "LANG", "LC_ALL", "TERM")
 QUESTION_RE = re.compile(
     r"\b(should i|shall i|would you like|do you want|could you (?:confirm|clarify)|"
     r"which (?:option|approach) (?:do|would) you)\b",
@@ -68,7 +74,7 @@ def build_claude_cmd(prompt: str, cfg: LiveConfig) -> list[str]:
 
 
 def claude_env() -> dict[str, str]:
-    env = dict(os.environ)
+    env = {k: v for k, v in os.environ.items() if k in TRIAL_ENV or k.startswith("ANTHROPIC_")}
     env["CLAUDE_CODE_DISABLE_AUTO_MEMORY"] = "1"
     return env
 

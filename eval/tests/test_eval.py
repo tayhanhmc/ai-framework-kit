@@ -293,3 +293,18 @@ def test_summary_labels_small_samples_inconclusive() -> None:
     assert "inconclusive (n<5 per arm)" in text
     assert "| t | framework | 1 | 1/1 |" in text and "skipped" in text
     assert "label: smoke" in text
+
+
+def test_live_requires_accepting_unsandboxed_bash(capsys: pytest.CaptureFixture[str]) -> None:
+    assert run.main(["--live", "--tasks", "ordinary_bug"]) == 2
+    assert "--allow-unsandboxed-bash" in capsys.readouterr().err
+
+
+def test_trial_environment_drops_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "synthetic")
+    monkeypatch.setenv("GITHUB_TOKEN", "synthetic")
+    monkeypatch.setenv("ANTHROPIC_MODEL", "kept")
+    env = live.claude_env()
+    assert "AWS_SECRET_ACCESS_KEY" not in env and "GITHUB_TOKEN" not in env
+    assert env["ANTHROPIC_MODEL"] == "kept" and env["PATH"]
+    assert env["CLAUDE_CODE_DISABLE_AUTO_MEMORY"] == "1"

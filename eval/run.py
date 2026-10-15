@@ -13,7 +13,7 @@ Run from the kit root:
     uv run --isolated --no-project --python ">=3.11" python eval/run.py
     uv run --isolated --no-project --python ">=3.11" python eval/run.py --live \\
         --tasks ordinary_bug,boundary --treatments minimal,framework --trials 1 \\
-        --model haiku --total-budget-usd 2
+        --model haiku --total-budget-usd 2 --allow-unsandboxed-bash
 
 Exit codes: 0 pass, 1 a validation failed, 2 could not run.
 """
@@ -252,6 +252,11 @@ def _append(path: Path, row: dict[str, object]) -> None:
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     p.add_argument("--live", action="store_true", help="run claude -p trials (costs money)")
+    p.add_argument(
+        "--allow-unsandboxed-bash",
+        action="store_true",
+        help="required with --live: trial agents run Bash as you, unsandboxed (see live.py)",
+    )
     p.add_argument("--tasks", help="comma-separated fixture names (default: all)")
     p.add_argument(
         "--treatments",
@@ -274,6 +279,13 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--trial-dir", help="parent for temporary trial folders")
     p.add_argument("--keep", action="store_true", help="keep trial folders for inspection")
     args = p.parse_args(argv)
+    if args.live and not args.allow_unsandboxed_bash:
+        print(
+            "run: --live gives each trial agent unsandboxed Bash as you; pass"
+            " --allow-unsandboxed-bash to accept that (see eval/live.py)",
+            file=sys.stderr,
+        )
+        return 2
     try:
         fixtures = (
             [load_fixture(n) for n in args.tasks.split(",")] if args.tasks else all_fixtures()
