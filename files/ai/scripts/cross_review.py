@@ -65,7 +65,7 @@ OWNER = (
 )
 # The review contract: prompt, schema and approval rule. Bump it when any of them changes,
 # so receipts made under an older contract stop counting.
-POLICY = "2026-10-15.3"
+POLICY = "2026-10-27.1"
 # Public Git empty-tree object ID, not a credential: the parent of a first commit.
 EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"  # pragma: allowlist secret
 SIGNALS = (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
