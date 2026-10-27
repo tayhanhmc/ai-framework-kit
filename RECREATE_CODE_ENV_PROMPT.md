@@ -89,7 +89,8 @@ Apply these to every file you write.
   interrupted run resumes where it stopped.
 - Script exit codes: 0 pass, 1 findings or failure, 2 could not run. Exit 2 is never a
   pass. `check_code.py` also exits 3 for DEGRADED (only a `baseline_failing` gate
-  failed), which is not a pass either. Hooks never exit 2: Claude treats 2 as blocking.
+  failed), which is not a pass either; `cross_review.py review` exits 4 when the round
+  limit sends findings to the user. Hooks never exit 2: Claude treats 2 as blocking.
 - Run this setup in Claude Code. Codex's default sandbox cannot write `.codex/`,
   `.agents/` or `.git/`. The user runs the few Codex steps marked as theirs.
 - No `<PLACEHOLDER>` may remain in a written file.
@@ -205,7 +206,7 @@ What the kit holds, and the failure each part prevents:
 | `verify_agent_env.py` | 788 | structural drift: missing docs, broken skills, budgets, placeholders, unanchored hooks |
 | `garden.py` | 1210 | context rot: dead paths and commands, changed declared dependencies, stale task lists and lanes, unrouted docs, deny rules naming renamed files, tool versions the probes have not seen |
 | `format_changed.py` | 189 | formatting-only CI failures after agent edits |
-| `cross_review.py`, `cross-review` | 745 | plans, and commits at the pre-land range check, passing without an independent Codex review of exactly that content |
+| `cross_review.py`, `cross-review` | 850 | plans, and commits at the pre-land range check, passing without an independent Codex review of exactly that content |
 | `work-management`, `plan-review` | 130 | multi-session work lost to compaction; unchecked plans; approval requests for routine adjustments; unbounded unattended runs |
 | `pre-land-review` | 68 | unreviewed commits, secrets, docs the change made wrong, older drift, over-building, cross-lane copies |
 | `maintenance` | 37 | stale claims, rules the tools stopped honouring, rules nothing needs, kit updates applied by hand |

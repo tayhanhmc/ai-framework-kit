@@ -19,10 +19,16 @@
 - `hook` is the Claude PreToolUse hook on ExitPlanMode. It reviews a new plan, denies it
   with findings when Codex blocks, and asks the user when the same plan comes back
   against the same snapshot.
+- Two blocking rounds (complete reviews with P0-P2 findings) per unit of work, then the
+  owner decides: a further review is refused without calling Codex, whatever `--force`
+  says. A commit's unit is the checkout's branch and the change's first parent, which an
+  amend keeps and a rebase or new branch changes; a plan's is its file. Each
+  `--owner-approved` review past the limit allows one more round.
 
-Receipts live in each repository's Git common directory under `ai-framework-review/`.
-Exit codes: 0 pass, 1 blocked, 2 could not run. This is a workflow guard, not a security
-boundary: nothing stops a commit; the range check finds unreviewed ones before landing.
+Receipts and round ledgers live in each repository's Git common directory under
+`ai-framework-review/`. Exit codes: 0 pass, 1 blocked, 2 could not run, 4 round limit
+reached. This is a workflow guard, not a security boundary: nothing stops a commit; the
+range check finds unreviewed ones before landing.
 """
 
 from __future__ import annotations
@@ -51,6 +57,12 @@ if sys.platform == "win32":
 import fcntl  # noqa: E402 - reject unsupported platforms before importing Unix APIs
 
 TIMEOUT = 300
+MAX_ROUNDS = 2
+OWNER = (
+    "Round limit reached: these findings go to the owner with your assessment, not into "
+    "another fix or review round. Only the owner can allow one more round "
+    "(`--owner-approved`)."
+)
 # The review contract: prompt, schema and approval rule. Bump it when any of them changes,
 # so receipts made under an older contract stop counting.
 POLICY = "2026-10-15.3"
@@ -88,6 +100,14 @@ SCHEMA = {
 
 class ReviewError(Exception):
     """Review cannot establish approval."""
+
+
+class RoundLimit(Exception):
+    """The unit of work had its blocking rounds; `latest` is the last blocking receipt."""
+
+    def __init__(self, latest: dict[str, Any]) -> None:
+        super().__init__("round limit reached")
+        self.latest = latest
 
 
 class Interrupted(BaseException):
@@ -344,6 +364,23 @@ def current(receipt: dict[str, Any], digest: str) -> bool:
     return bool(receipt.get("result")) and receipt.get("digest") == digest
 
 
+def blocking(result: dict[str, Any]) -> bool:
+    """A completed review with a P0-P2 finding: one round toward the limit."""
+    return result.get("complete") is True and any(
+        f["priority"] != "P3" for f in result.get("findings", [])
+    )
+
+
+def ledger_path(target: Path, unit: str) -> Path:
+    return store(target) / f"rounds-{sha256(unit.encode())}.json"
+
+
+def over_limit(rounds: list[dict[str, Any]]) -> bool:
+    """True once the blocking rounds use up two plus one per owner-approved round."""
+    granted = sum(1 for item in rounds if item.get("owner_approved"))
+    return len(rounds) >= MAX_ROUNDS + granted
+
+
 def run_review(
     target: Path,
     key: str,
@@ -352,18 +389,31 @@ def run_review(
     feedback: str,
     model: str | None,
     *,
+    unit: str,
     context: list[dict[str, str]] | None = None,
     force: bool = False,
+    owner_approved: bool = False,
 ) -> dict[str, Any]:
     """Review once per key and identity; a current result is reused unless forced or
-    answered with feedback, and a failed attempt is retried."""
+    answered with feedback, and a failed attempt is retried. Each blocking result is
+    recorded as a round of `unit`; once `over_limit`, any review that is not a current
+    approval raises RoundLimit, unless `owner_approved` grants (and records) one more."""
     folder = store(target)
     receipt_path = folder / f"{key}.json"
     receipt = read_json(receipt_path)
     digest = identity(task, material, model)
-    if current(receipt, digest) and not feedback and not force:
+    reusable = current(receipt, digest) and not feedback and not force
+    if reusable and receipt.get("approved"):
         return receipt
     with locked(folder / "review.lock"):
+        ledger_file = ledger_path(target, unit)
+        ledger = read_json(ledger_file) or {"unit": unit, "rounds": []}
+        extra = over_limit(ledger["rounds"])
+        if extra and not owner_approved:
+            last = ledger["rounds"][-1]
+            raise RoundLimit({"approved": False, "result": last["result"], "run": last["run"]})
+        if reusable:
+            return receipt
         run = folder / "runs" / uuid.uuid4().hex
         run.mkdir(parents=True, mode=0o700)
         prior = receipt.get("result", {})
@@ -378,6 +428,7 @@ def run_review(
             "reviewed_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
             "context": context or [],
             "run": str(run),
+            **({"owner_approved": True} if extra else {}),
         }
 
         def failed(error: str) -> dict[str, Any]:
@@ -395,6 +446,11 @@ def run_review(
         else:
             receipt = {"key": key, "approved": validate_result(result), "result": result}
             receipt.update(provenance, digest=digest)
+            if blocking(result):
+                ledger["rounds"].append(
+                    {"key": key, "owner_approved": extra, "run": str(run), "result": result}
+                )
+                write_json(ledger_file, ledger)
         write_json(receipt_path, receipt)
     return receipt
 
@@ -407,8 +463,10 @@ def review_change(
     feedback: str = "",
     model: str | None = None,
     force: bool = False,
+    owner_approved: bool = False,
 ) -> dict[str, Any]:
-    """Review the change from `parent` to `new_tree`, frozen Git objects in `target`."""
+    """Review the change from `parent` to `new_tree`, frozen Git objects in `target`. Its
+    rounds count per branch and parent, so amending keeps the count."""
     material, prints = read_context(context)
     task = (
         f"Review a commit in {target}: exactly the change "
@@ -418,9 +476,12 @@ def review_change(
         "or files on disk as the change under review."
     )
     key = commit_key(parent, new_tree)
+    branch = git(target, "symbolic-ref", "-q", "--short", "HEAD", ok=(0, 1)).stdout.decode()
     return run_review(
-        target, key, task, f"ARTIFACTS\n{material}", feedback, model, context=prints, force=force
-    )
+        target, key, task, f"ARTIFACTS\n{material}", feedback, model,
+        unit=f"commit\0{branch.strip()}\0{parent}", context=prints, force=force,
+        owner_approved=owner_approved,
+    )  # fmt: skip
 
 
 def review_staged(
@@ -429,11 +490,14 @@ def review_staged(
     feedback: str = "",
     model: str | None = None,
     force: bool = False,
+    owner_approved: bool = False,
 ) -> dict[str, Any]:
     target = checkout(target)
     if not staged(target):
         raise ReviewError(f"nothing staged in {target}; stage exactly the intended commit")
-    return review_change(target, *candidate(target), context, feedback, model, force)
+    return review_change(
+        target, *candidate(target), context, feedback, model, force, owner_approved
+    )
 
 
 def review_commit(
@@ -443,9 +507,12 @@ def review_commit(
     feedback: str = "",
     model: str | None = None,
     force: bool = False,
+    owner_approved: bool = False,
 ) -> dict[str, Any]:
     target = checkout(target)
-    return review_change(target, *committed(target, rev), context, feedback, model, force)
+    return review_change(
+        target, *committed(target, rev), context, feedback, model, force, owner_approved
+    )
 
 
 def plan_request(root: Path, start: Path, plan: str) -> tuple[str, str, str]:
@@ -465,21 +532,30 @@ def plan_request(root: Path, start: Path, plan: str) -> tuple[str, str, str]:
     return "plan-" + sha256(plan.encode()), task, f"PLAN\n{plan}"
 
 
+def plan_unit(path: Path) -> str:
+    """The unit a plan's rounds count under: its file, however it is reached."""
+    return f"plan\0{path.resolve()}"
+
+
 def review_plan(
     root: Path,
-    plan: str,
+    plan_file: Path,
     feedback: str = "",
     model: str | None = None,
     force: bool = False,
     context: list[Path] | None = None,
+    owner_approved: bool = False,
 ) -> dict[str, Any]:
     start = root.resolve()
     root = framework_root(start)
-    key, task, material = plan_request(root, start, plan)
+    key, task, material = plan_request(root, start, plan_file.read_text())
     extra, prints = read_context(context or [])
     if extra:
         material += f"\n\nARTIFACTS\n{extra}"
-    return run_review(root, key, task, material, feedback, model, context=prints, force=force)
+    return run_review(
+        root, key, task, material, feedback, model, unit=plan_unit(plan_file),
+        context=prints, force=force, owner_approved=owner_approved,
+    )  # fmt: skip
 
 
 def approval_problem(
@@ -580,15 +656,23 @@ def deny(reason: str, decision: str = "deny") -> dict[str, Any]:
     }
 
 
-def plan_hook(payload: dict[str, Any], plan: str) -> dict[str, Any]:
+def plan_hook(payload: dict[str, Any], tool_input: dict[str, Any]) -> dict[str, Any]:
+    """Rounds count per plan file (`planFilePath`), else per session."""
     start = Path(payload["cwd"]).resolve()
     root = framework_root(start)
-    key, task, material = plan_request(root, start, plan)
+    key, task, material = plan_request(root, start, str(tool_input.get("plan", "")))
     earlier = read_json(store(root) / f"{key}.json")
     if current(earlier, identity(task, material, None)) and not earlier.get("approved"):
         # The same plan came back after a block, against the same code: the user decides.
         return deny(describe(earlier) + "\nThis exact plan was already blocked.", "ask")
-    receipt = run_review(root, key, task, material, "", None)
+    if tool_input.get("planFilePath"):
+        unit = plan_unit(Path(str(tool_input["planFilePath"])))
+    else:
+        unit = f"session\0{payload.get('session_id', '')}"
+    try:
+        receipt = run_review(root, key, task, material, "", None, unit=unit)
+    except RoundLimit as exc:
+        return deny(f"{describe(exc.latest)}\n{OWNER}")
     return {} if receipt.get("approved") else deny(describe(receipt))
 
 
@@ -597,7 +681,7 @@ def hook(payload: dict[str, Any]) -> dict[str, Any]:
         return {}  # Never review from inside a reviewer.
     if payload.get("tool_name") != "ExitPlanMode":
         return {}
-    return plan_hook(payload, str((payload.get("tool_input") or {}).get("plan", "")))
+    return plan_hook(payload, payload.get("tool_input") or {})
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -612,14 +696,17 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--feedback", type=Path, help="implementer's evidence or rebuttal")
     parser.add_argument("--model", help="otherwise use Codex's configured model")
     parser.add_argument("--force", action="store_true", help="review again even if current")
+    parser.add_argument(
+        "--owner-approved", action="store_true", help="the owner allows one round past the limit"
+    )
     args = parser.parse_args(argv)
     if (
         args.range
         and args.action != "check"
-        or (args.plan or args.commit)
+        or (args.plan or args.commit or args.owner_approved)
         and args.action != "review"
     ):
-        parser.error("--plan and --commit go with review; --range goes with check")
+        parser.error("--plan, --commit and --owner-approved go with review; --range with check")
     try:
         if args.action == "hook":
             print(json.dumps(hook(json.load(sys.stdin))))
@@ -636,16 +723,20 @@ def main(argv: list[str] | None = None) -> int:
             return 1 if problem else 0
         feedback = args.feedback.read_text() if args.feedback else ""
         common = (feedback, args.model, args.force)
+        owner = args.owner_approved
         if args.plan:
-            receipt = review_plan(args.target, args.plan.read_text(), *common, args.context)
+            receipt = review_plan(args.target, args.plan, *common, args.context, owner)
         elif args.commit:
-            receipt = review_commit(args.target, args.commit, args.context, *common)
+            receipt = review_commit(args.target, args.commit, args.context, *common, owner)
         else:
-            receipt = review_staged(args.target, args.context, *common)
+            receipt = review_staged(args.target, args.context, *common, owner)
         print(describe(receipt))
         if receipt.get("error"):
             return 2
         return 0 if receipt.get("approved") else 1
+    except RoundLimit as exc:
+        print(f"{describe(exc.latest)}\n{OWNER}")
+        return 4
     except Interrupted as exc:
         print(f"BLOCKED: {exc}", file=sys.stderr)
         return 128 + exc.signum

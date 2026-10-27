@@ -72,6 +72,14 @@ def provider(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     return prompts
 
 
+@pytest.fixture
+def add_test(tmp_path: Path) -> Path:
+    """A plan file outside the framework, so writing it changes no snapshot."""
+    plan = tmp_path / "add-test.md"
+    plan.write_text("Add a test")
+    return plan
+
+
 def frozen_diff(target: Path, prompt: str) -> str:
     """The change a commit review names, read the way the prompt tells Codex to."""
     match = re.search(r"`git diff ([0-9a-f]{40}) ([0-9a-f]{40})`", prompt)
@@ -338,7 +346,7 @@ def test_interrupted_review_stops_codex_and_records_nothing(
 
 
 def test_changed_context_or_repository_is_reviewed_again(
-    root: Path, provider: list[str], tmp_path: Path
+    root: Path, provider: list[str], tmp_path: Path, add_test: Path
 ) -> None:
     clone = root / "shop/repo"
     task = tmp_path / "task.md"
@@ -350,11 +358,11 @@ def test_changed_context_or_repository_is_reviewed_again(
     task.write_text("Value must be 5")
     cr.review_staged(clone, [task])
     assert len(provider) == 2 and "Value must be 5" in provider[-1]
-    cr.review_plan(root, "Add a test")
-    cr.review_plan(root, "Add a test")
+    cr.review_plan(root, add_test)
+    cr.review_plan(root, add_test)
     assert len(provider) == 3
     cr.git(clone, "commit", "-m", "advance")
-    cr.review_plan(root, "Add a test")
+    cr.review_plan(root, add_test)
     assert len(provider) == 4  # The code the plan was checked against moved.
 
 
@@ -434,10 +442,12 @@ def test_model_choice_and_force_review_again(root: Path, monkeypatch: pytest.Mon
 
 
 @pytest.mark.parametrize("change", ["staged", "unstaged", "untracked", "framework"])
-def test_plan_review_covers_uncommitted_work(root: Path, provider: list[str], change: str) -> None:
+def test_plan_review_covers_uncommitted_work(
+    root: Path, provider: list[str], change: str, add_test: Path
+) -> None:
     clone = root / "shop/repo"
-    cr.review_plan(root / "shop", "Add a test")
-    cr.review_plan(root / "shop", "Add a test")
+    cr.review_plan(root / "shop", add_test)
+    cr.review_plan(root / "shop", add_test)
     assert len(provider) == 1
     if change == "staged":
         stage(clone, 7)
@@ -448,23 +458,25 @@ def test_plan_review_covers_uncommitted_work(root: Path, provider: list[str], ch
     else:
         (root / "notes.md").write_text("framework note\n")
     status = cr.out(clone, "status", "--porcelain")
-    cr.review_plan(root / "shop", "Add a test")
+    cr.review_plan(root / "shop", add_test)
     assert len(provider) == 2  # The snapshot the plan was checked against changed.
     assert cr.out(clone, "status", "--porcelain") == status  # The real index is untouched.
 
 
-def test_plan_in_a_workspace_ignores_other_products(root: Path, provider: list[str]) -> None:
+def test_plan_in_a_workspace_ignores_other_products(
+    root: Path, provider: list[str], add_test: Path
+) -> None:
     other = root / "other"
     other.mkdir()
     (other / "workspace.toml").write_text('name = "other"\n')
     cr.git(other, "init", "repo")
-    cr.review_plan(root / "shop", "Add a test")
+    cr.review_plan(root / "shop", add_test)
     (other / "repo/file.txt").write_text("unrelated\n")
-    cr.review_plan(root / "shop", "Add a test")
+    cr.review_plan(root / "shop", add_test)
     assert len(provider) == 1  # Another product's work does not invalidate this plan.
-    cr.review_plan(root, "Add a test")
+    cr.review_plan(root, add_test)
     (other / "repo/file.txt").write_text("changed\n")
-    cr.review_plan(root, "Add a test")
+    cr.review_plan(root, add_test)
     assert len(provider) == 3  # From the root, every checkout counts.
 
 
@@ -565,12 +577,14 @@ def test_plan_snapshot_never_writes_untracked_secrets(root: Path, provider: list
         assert cr.git(root, "cat-file", "-e", blob, ok=(0, 1, 128)).returncode != 0
 
 
-def test_plan_review_sees_index_only_changes(root: Path, provider: list[str]) -> None:
+def test_plan_review_sees_index_only_changes(
+    root: Path, provider: list[str], add_test: Path
+) -> None:
     clone = root / "shop/repo"
-    cr.review_plan(root / "shop", "Add a test")
+    cr.review_plan(root / "shop", add_test)
     stage(clone, 7)
     (clone / "code.py").write_text("value = 1\n")  # Working copy back to HEAD, index changed.
-    cr.review_plan(root / "shop", "Add a test")
+    cr.review_plan(root / "shop", add_test)
     assert len(provider) == 2
 
 
@@ -625,3 +639,155 @@ def test_plan_review_uses_and_binds_context(
     assert cr.main(args) == 0 and len(provider) == 1  # Same plan and context: reused.
     task.write_text("Plans must keep value at 3")
     assert cr.main(args) == 0 and len(provider) == 2  # Changed requirements: reviewed again.
+
+
+def answer(tmp_path: Path, text: str = "The caller needs 3") -> str:
+    response = tmp_path / "response.txt"
+    response.write_text(text)
+    return str(response)
+
+
+def staged_receipt(clone: Path) -> dict[str, Any]:
+    return cr.read_json(cr.store(clone) / f"{cr.commit_key(*cr.candidate(clone))}.json")
+
+
+def test_two_blocking_rounds_then_the_owner_decides(
+    root: Path, provider: list[str], tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    clone = root / "shop/repo"
+    stage(clone, 2)
+    assert cr.main(["review", "--target", str(clone)]) == 0
+    stage(clone, 3)
+    review = ["review", "--target", str(clone)]
+    assert cr.main(review) == 1
+    assert cr.main([*review, "--feedback", answer(tmp_path)]) == 1
+    capsys.readouterr()
+    calls = len(provider)
+    for extra in ([], ["--force"], ["--feedback", answer(tmp_path)]):
+        assert cr.main([*review, *extra]) == 4
+    stage(clone, 5)  # New content in the same unit is refused too.
+    assert cr.main(review) == 4 and len(provider) == calls
+    out = capsys.readouterr().out
+    assert "Wrong value" in out and "go to the owner" in out
+    stage(clone, 2)
+    assert cr.main(review) == 0 and len(provider) == calls  # A current approval still counts.
+    stage(clone, 3)
+    assert cr.main([*review, "--owner-approved", "--force"]) == 1 and len(provider) == calls + 1
+    assert staged_receipt(clone)["owner_approved"] is True
+    assert cr.main([*review, "--force"]) == 4  # The owner allowed exactly one round.
+    assert cr.main([*review, "--owner-approved", "--force"]) == 1 and len(provider) == calls + 2
+
+
+def test_owner_approval_below_the_limit_grants_nothing(
+    root: Path, provider: list[str], tmp_path: Path
+) -> None:
+    clone = root / "shop/repo"
+    stage(clone, 3)
+    review = ["review", "--target", str(clone)]
+    assert cr.main([*review, "--owner-approved"]) == 1
+    assert "owner_approved" not in staged_receipt(clone)
+    assert cr.main([*review, "--feedback", answer(tmp_path)]) == 1
+    assert cr.main([*review, "--force"]) == 4
+
+
+def test_amending_keeps_the_round_count(root: Path, provider: list[str]) -> None:
+    clone = root / "shop/repo"
+    review = ["review", "--target", str(clone), "--commit", "HEAD"]
+    for round_ in (1, 2, 3):
+        stage(clone, 3, f"fix{round_}.py")
+        commit(clone, "fix", *(["--amend"] if round_ > 1 else []))
+        assert cr.main(review) == (1 if round_ < 3 else 4)  # Every amend is a new sha.
+    assert len(provider) == 2
+    stage(clone, 3, "next.py")  # The next commit on the branch is a new unit.
+    assert cr.main(["review", "--target", str(clone)]) == 1 and len(provider) == 3
+
+
+def test_new_branch_or_rebase_starts_fresh(root: Path, provider: list[str], tmp_path: Path) -> None:
+    clone = root / "shop/repo"
+    lane = root / "shop/.worktrees/feature"
+    cr.git(clone, "worktree", "add", "-q", "-b", "feature", str(lane))
+    stage(lane, 3)
+    commit(lane, "feature")
+    review = ["review", "--target", str(lane), "--commit", "HEAD"]
+    assert cr.main(review) == 1
+    assert cr.main([*review, "--feedback", answer(tmp_path)]) == 1
+    assert cr.main([*review, "--force"]) == 4
+    cr.git(lane, "checkout", "-q", "-b", "retry")
+    assert cr.main([*review, "--force"]) == 1  # Another branch: fresh rounds.
+    cr.git(lane, "checkout", "-q", "feature")
+    assert cr.main([*review, "--force"]) == 4
+    stage(clone, 2, "main.py")
+    commit(clone, "main moved")
+    cr.git(lane, "rebase", "-q", "main")
+    assert cr.main(review) == 1 and len(provider) == 4  # Rebased onto new main: fresh.
+
+
+def test_failures_incomplete_reviews_and_approvals_do_not_count(
+    root: Path, provider: list[str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    clone = root / "shop/repo"
+    review = ["review", "--target", str(clone)]
+    stage(clone, 3)
+    assert cr.main(review) == 1
+    reviewer = cr.codex
+
+    def fail(*_args: Any) -> dict[str, Any]:
+        raise cr.ReviewError("rate limited")
+
+    def incomplete(*_args: Any) -> dict[str, Any]:
+        return result(issue=True, complete=False)
+
+    monkeypatch.setattr(cr, "codex", fail)
+    assert cr.main([*review, "--force"]) == 2
+    assert cr.main([*review, "--force"]) == 2
+    monkeypatch.setattr(cr, "codex", incomplete)
+    assert cr.main([*review, "--force"]) == 1
+    monkeypatch.setattr(cr, "codex", reviewer)
+    stage(clone, 2)
+    assert cr.main([*review, "--force"]) == 0
+    stage(clone, 3)
+    assert cr.main([*review, "--force"]) == 1  # The second blocking round.
+    assert cr.main([*review, "--force"]) == 4
+
+
+def test_plan_rounds_count_per_plan_file_and_in_the_hook(
+    root: Path, provider: list[str], tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    plan = tmp_path / "plan.md"
+    review = ["review", "--target", str(root), "--plan", str(plan)]
+    for version in (1, 2):
+        plan.write_text(f"{version}. git push --force origin main")
+        assert cr.main(review) == 1
+    plan.write_text("3. git push --force origin main")
+    assert cr.main(review) == 4 and len(provider) == 2
+    assert "go to the owner" in capsys.readouterr().out
+
+    def hook(text: str, **extra: str) -> dict[str, Any]:
+        tool_input = {"plan": text, **extra}
+        return cr.hook({"cwd": str(root), "tool_name": "ExitPlanMode", "tool_input": tool_input})
+
+    denied = hook("4. git push --force origin main", planFilePath=str(plan))
+    assert decision(denied) == "deny" and "go to the owner" in json.dumps(denied)
+    assert len(provider) == 2  # Codex is not asked again.
+    other = tmp_path / "other.md"
+    assert decision(hook("5. git push --force", planFilePath=str(other))) == "deny"
+    assert len(provider) == 3  # Another plan file has rounds of its own.
+    assert cr.main([*review, "--owner-approved"]) == 1 and len(provider) == 4
+    plan.write_text("Small safe plan")
+    assert cr.main(review) == 4  # The owner's round is used up.
+
+
+def test_plan_hook_without_a_plan_file_counts_per_session(
+    root: Path, provider: list[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def hook(text: str, session: str) -> dict[str, Any]:
+        payload = {"cwd": str(root), "session_id": session, "tool_name": "ExitPlanMode"}
+        return cr.hook({**payload, "tool_input": {"plan": text}})
+
+    for version in (1, 2):
+        assert decision(hook(f"{version}. git push --force", "s1")) == "deny"
+    denied = hook("3. git push --force", "s1")
+    assert "go to the owner" in json.dumps(denied) and len(provider) == 2
+    assert decision(hook("3. git push --force", "s2")) == "deny" and len(provider) == 3
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps({})))
+    assert cr.main(["hook"]) == 0  # Hooks never exit with the round-limit code.
