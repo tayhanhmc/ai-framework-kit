@@ -249,8 +249,8 @@ These sections are required, in this order (the verifier checks the headings):
   when ambiguity would change behaviour, APIs, data or dependencies. Make the smallest
   change that meets the acceptance criteria. Before calling work done, run the checks,
   read the diff for drift and placeholders, and report the evidence. Every commit
-  and landing range passes the cross-model review in `docs/agent-workflows/cross-review.md`. Add a regression test for a fixed bug
-  when automatable. Never weaken, skip or delete a test to pass: fix the code, or
+  and landing range passes the cross-model review in `docs/agent-workflows/cross-review.md`. For a bug fix or specified behaviour
+  change, write the test first when automatable and show it failing. Never weaken, skip or delete a test to pass: fix the code, or
   change the test on purpose and say so."
 - **`## Codebase map`:** `docs/dev/architecture.md` for the framework scripts; each
   workspace's AGENTS.md routes to its own docs and its clone's. Docs are written by
