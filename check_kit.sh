@@ -22,6 +22,7 @@ ruff_args=(--isolated --line-length 100 --target-version py311)
   "${py[@]}" "${tools[@]}" -- pytest -q -p no:cacheprovider tests eval/tests
   "${py[@]}" -- python eval/run.py >/dev/null
   "${py[@]}" -- python probes/run_probes.py >/dev/null
+  bash -n user/claude/hooks/verify-gate.sh
 )
 "${py[@]}" -- python "$kit/install.py" --framework "$work" --prefix kt \
   --revision "$("$kit/kit_snapshot.sh")" >/dev/null
