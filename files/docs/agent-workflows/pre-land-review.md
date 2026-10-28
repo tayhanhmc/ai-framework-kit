@@ -13,10 +13,10 @@ trigger below. Say in the report which you skipped.
 - Gates: `check_code.py lint` and `check_code.py test` with `--target <lane>`. Only
   exit 0 passes: report exit 3 (DEGRADED, a `baseline_failing` gate failed, so new
   failures in it are invisible) as unverified, and exit 2 as not run.
-- Every commit reviewed: `cross_review.py check --target <lane> --range <base>..HEAD`
-  from the framework root lists commits without a current passing review. Review each
-  with `cross_review.py review --target <lane> --commit <sha>` and act on the findings
-  as `docs/agent-workflows/cross-review.md` says, until the check exits 0.
+- Range reviewed: `cross_review.py check --target <lane> --range <base>..HEAD` from the
+  framework root passes only with a current passing review of what the range adds. Run
+  `cross_review.py review --target <lane> --range <base>..<branch>` and act on the
+  findings as `docs/agent-workflows/cross-review.md` says, until the check exits 0.
 - Net lines from `git diff --shortstat <base>...HEAD`; explain a large surprise, but a
   difference from the plan's estimate alone needs no approval.
 - `garden.py --changes <base> --target <lane>`: fix mechanical doc drift in this same
@@ -49,16 +49,17 @@ catches them.
 
 ## 2. Correctness
 
-Step 1 reviewed every commit with Codex (`docs/agent-workflows/cross-review.md`), one
-change at a time. For risky changes, run the built-in `/code-review` once over the
+Step 1 reviewed the range with the cross-model reviewer
+(`docs/agent-workflows/cross-review.md`). For risky changes, run the built-in `/code-review` once over the
 whole `<base>..HEAD` diff, which catches interactions between commits. Record findings
 that duplicate the commit reviews, and false positives, in the task file: they decide
 whether this layer keeps earning its time.
 
 ## 3. Less code, fresh eyes
 
-A fresh context from the other model family. From Claude:
-`codex exec --ephemeral -s read-only -C <lane> "<brief>" < /dev/null`. The brief:
+A fresh context from the other model family. From Claude, with Codex:
+`codex exec --ephemeral -s read-only -C <lane> "<brief>" < /dev/null`; with Cursor:
+`agent -p --mode ask --workspace <lane> "<brief>" < /dev/null`. The brief:
 
 > Review the diff between <base> and HEAD for size, not correctness. List code that can
 > be deleted, existing helpers it duplicates, the smallest version that meets the

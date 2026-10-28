@@ -89,8 +89,8 @@ Apply these to every file you write.
   interrupted run resumes where it stopped.
 - Script exit codes: 0 pass, 1 findings or failure, 2 could not run. Exit 2 is never a
   pass. `check_code.py` also exits 3 for DEGRADED (only a `baseline_failing` gate
-  failed), which is not a pass either; `cross_review.py review` exits 4 when the round
-  limit sends findings to the user. Hooks never exit 2: Claude treats 2 as blocking.
+  failed), which is not a pass either; `cross_review.py review` exits 3 when the round
+  cap sends findings to the user (only the user lifts it, with `--owner-override`). Hooks never exit 2: Claude treats 2 as blocking.
 - Run this setup in Claude Code. Codex's default sandbox cannot write `.codex/`,
   `.agents/` or `.git/`. The user runs the few Codex steps marked as theirs.
 - No `<PLACEHOLDER>` may remain in a written file.
@@ -192,9 +192,11 @@ local edits; steps 1 and 3 only report differences.
 3. Run `uv lock`, `uv sync --locked`, `uv run --locked poe format`, then
    `uv run --locked poe lint` and `uv run --locked poe test`. Both must pass before
    anything else is written.
-4. Run `uv run --locked pre-commit install`. The Codex review needs no install: the
-   kit's `.claude/settings.json` hook enforces plan review, and the pre-land range check
-   lists unreviewed commits (`docs/agent-workflows/cross-review.md`).
+4. Run `uv run --locked pre-commit install`. The cross-model review needs Codex or
+   Cursor's `agent` CLI on PATH (`CROSS_REVIEW_PROVIDER` picks one when both are; review
+   input leaves the machine for that provider, secret-screened first). The kit's
+   `.claude/settings.json` hook enforces plan review, and the pre-land range check gates
+   landing (`docs/agent-workflows/cross-review.md`).
 
 What the kit holds, and the failure each part prevents:
 
@@ -206,7 +208,7 @@ What the kit holds, and the failure each part prevents:
 | `verify_agent_env.py` | 788 | structural drift: missing docs, broken skills, budgets, placeholders, unanchored hooks |
 | `garden.py` | 1210 | context rot: dead paths and commands, changed declared dependencies, stale task lists and lanes, unrouted docs, deny rules naming renamed files, tool versions the probes have not seen |
 | `format_changed.py` | 189 | formatting-only CI failures after agent edits |
-| `cross_review.py`, `cross-review` | 850 | plans, and commits at the pre-land range check, passing without an independent Codex review of exactly that content |
+| `cross_review.py`, `cross-review` | 1485 | plans, commits and landing ranges passing without an independent review of exactly that content by another model family (Codex, or a Cursor panel) |
 | `work-management`, `plan-review` | 130 | multi-session work lost to compaction; unchecked plans; approval requests for routine adjustments; unbounded unattended runs |
 | `pre-land-review` | 68 | unreviewed commits, secrets, docs the change made wrong, older drift, over-building, cross-lane copies |
 | `maintenance` | 37 | stale claims, rules the tools stopped honouring, rules nothing needs, kit updates applied by hand |
@@ -247,8 +249,7 @@ These sections are required, in this order (the verifier checks the headings):
   when ambiguity would change behaviour, APIs, data or dependencies. Make the smallest
   change that meets the acceptance criteria. Before calling work done, run the checks,
   read the diff for drift and placeholders, and report the evidence. Every commit
-  passes the Codex review in `docs/agent-workflows/cross-review.md` before it lands; the
-  pre-land range check lists any without one. Add a regression test for a fixed bug
+  and landing range passes the cross-model review in `docs/agent-workflows/cross-review.md`. Add a regression test for a fixed bug
   when automatable. Never weaken, skip or delete a test to pass: fix the code, or
   change the test on purpose and say so."
 - **`## Codebase map`:** `docs/dev/architecture.md` for the framework scripts; each
@@ -354,7 +355,7 @@ Each of these was tried or evaluated, and rejected:
   of the doc;
 - copies of linter rules in prose;
 - per-commit human approval or a push guard, unless step 5's answers ask for one
-  (the Codex review of Claude's commits is required by default);
+  (the cross-model review of Claude's changes is required by default);
 - `ask` permission rules (auto mode still prompts for them, and `-p` turns them into
   denials);
 - launcher scripts;

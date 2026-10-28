@@ -71,13 +71,37 @@
               "--no-project",
               "--python",
               ">=3.11",
+              "--with",
+              "detect-secrets==1.5.0",
               "--",
               "python",
               "${CLAUDE_PROJECT_DIR}/ai/scripts/cross_review.py",
               "hook"
             ],
-            "timeout": 330,
+            "timeout": 2430,
             "onFailure": "block"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "uv",
+            "args": [
+              "run",
+              "--isolated",
+              "--no-config",
+              "--no-project",
+              "--python",
+              ">=3.11",
+              "--",
+              "python",
+              "${CLAUDE_PROJECT_DIR}/ai/scripts/cross_review.py",
+              "hook"
+            ],
+            "timeout": 30
           }
         ]
       }

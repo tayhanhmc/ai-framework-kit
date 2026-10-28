@@ -1,7 +1,7 @@
 # Work management
 
 For work spanning sessions; single-session work needs none of this. Every commit passes
-the Codex review in `docs/agent-workflows/cross-review.md` before it lands.
+the cross-model review in `docs/agent-workflows/cross-review.md` before it lands.
 
 ## Artifacts
 
@@ -68,7 +68,7 @@ authoritative current state; use a fresh session when context quality warrants i
 4. List the corrections the user had to repeat and propose one rule for each (propose
    only). An accepted rule gets `<!-- added YYYY-MM-DD: <failure> -->`.
 5. Move the artifacts to `ai/archive/<feature>/`.
-6. Report the result, gates, Codex review outcome, limitations and unresolved findings.
+6. Report the result, gates, cross-model review outcome, limitations and unresolved findings.
 
 ## Retention
 

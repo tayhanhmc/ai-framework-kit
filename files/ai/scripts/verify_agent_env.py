@@ -19,7 +19,7 @@ Contract:
       files, frontmatter is valid and the body points at one path that exists;
     - line budgets: ai/project.md 150, decisions.md 250, architecture.md 300, guidelines 200;
     - settings and hooks files parse, wire the SessionStart and format hooks (Claude settings
-      also run `cross_review.py hook` on PreToolUse[ExitPlanMode]),
+      also run `cross_review.py hook` on PreToolUse[ExitPlanMode] and PreToolUse[Bash]),
       and every hook command that names a script is anchored and names a script that exists
       (in Claude settings only `${CLAUDE_PROJECT_DIR}` anchors: `git rev-parse` follows a `cd`);
     - each workspace.toml loads through workspace_profile.load_profile.
@@ -140,7 +140,7 @@ BACKTICK_RE = re.compile(r"`([^`\s]+)`")
 
 HOOK_EVENTS = {"SessionStart": ("garden.py", "--session"), "PostToolUse": ("format_changed.py",)}
 REVIEW_HOOK = "ai/scripts/cross_review.py"
-REVIEW_HOOK_EVENTS = (("PreToolUse", "ExitPlanMode"),)
+REVIEW_HOOK_EVENTS = (("PreToolUse", "ExitPlanMode"), ("PreToolUse", "Bash"))
 PROJECT_ANCHOR = "\x00P"
 GIT_ANCHOR = "\x00G"
 PROJECT_VAR_RE = re.compile(r"\$\{CLAUDE_PROJECT_DIR\}|\$CLAUDE_PROJECT_DIR\b")

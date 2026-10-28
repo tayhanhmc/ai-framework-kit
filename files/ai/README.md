@@ -8,9 +8,9 @@
 | `ai/plans/` | approved plans |
 | `ai/tasks/` | open task lists and handoffs |
 | `ai/archive/` | finished work, by feature |
-| `ai/scripts/` | verifier, garden, profile loader, check runner, format hook, Codex review |
+| `ai/scripts/` | verifier, garden, profile loader, check runner, format hook, cross-model review |
 
 Each work-state folder keeps a `.gitkeep`, so it survives when its last file is archived.
 
-Codex review receipts live in Git metadata, outside this tree; see
+Cross-model review receipts live in Git metadata, outside this tree; see
 `docs/agent-workflows/cross-review.md`.

@@ -1,6 +1,6 @@
 # Plan review
 
-Codex reviews plans through the plan checkpoint in `docs/agent-workflows/cross-review.md`:
+The cross-model reviewer checks plans through the plan checkpoint in `docs/agent-workflows/cross-review.md`:
 automatically when Claude leaves plan mode, or with `--plan` for a written plan. Give it
 the plan and the requirements as written, not your assessment or preferred answer.
 

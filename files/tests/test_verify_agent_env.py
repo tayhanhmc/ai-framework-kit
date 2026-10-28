@@ -70,7 +70,10 @@ def claude_settings(prefix: str) -> str:
     hooks = {
         "SessionStart": [group("startup|resume|clear|compact", "garden.py", "--session")],
         "PostToolUse": [group("Edit|Write", "format_changed.py")],
-        "PreToolUse": [group("ExitPlanMode", "cross_review.py", "hook")],
+        "PreToolUse": [
+            group("ExitPlanMode", "cross_review.py", "hook"),
+            group("Bash", "cross_review.py", "hook"),
+        ],
     }
     return json.dumps({"permissions": {"deny": ["Read(./**/.env)"]}, "hooks": hooks}, indent=2)
 
@@ -500,6 +503,14 @@ def test_review_hook_needs_its_matcher(fw: Path) -> None:
     data["hooks"]["PreToolUse"][0]["matcher"] = "Edit"
     write(fw / ".claude/settings.json", json.dumps(data))
     message = "hooks.PreToolUse does not run cross_review.py hook with matcher 'ExitPlanMode'"
+    assert_one(fw, ".claude/settings.json", message)
+
+
+def test_review_hook_guards_bash_too(fw: Path) -> None:
+    data = json.loads((fw / ".claude/settings.json").read_text())
+    data["hooks"]["PreToolUse"] = data["hooks"]["PreToolUse"][:1]
+    write(fw / ".claude/settings.json", json.dumps(data))
+    message = "hooks.PreToolUse does not run cross_review.py hook with matcher 'Bash'"
     assert_one(fw, ".claude/settings.json", message)
 
 

@@ -13,7 +13,8 @@ never by the model's self-report alone. Without `--live` nothing runs: the probe
 printed and the script exits 0, so ordinary CI never spends money or calls a CLI.
 
 Usage (from the kit root):
-    uv run --isolated --no-project --python ">=3.11" -- python probes/run_probes.py --live
+    uv run --isolated --no-project --python ">=3.11" --with detect-secrets==1.5.0 -- \
+        python probes/run_probes.py --live
         [--only PREFIX ...] [--model haiku] [--codex-model MODEL] [--budget 1.00]
         [--no-codex] [--framework PATH] [--workdir DIR] [--keep]
 
@@ -37,6 +38,7 @@ from contextlib import suppress
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
+from unittest import mock
 
 KIT = Path(__file__).resolve().parents[1]
 STATUSES = ("PASS", "FAIL", "UNSUPPORTED", "UNTESTED")
@@ -684,17 +686,23 @@ class Probes:
             'def add(a, b):\n    """Return the sum."""\n    return a - b\n'
         )
         git(repo, "add", "-A")
+        env = {"CROSS_REVIEW_PROVIDER": "codex"}
+        if self.args.codex_model:
+            env["CROSS_REVIEW_MODEL"] = self.args.codex_model
         start = time.monotonic()
-        receipt = cr.review_staged(repo, [], model=self.args.codex_model)
+        with mock.patch.dict(os.environ, env):
+            if not self.args.codex_model:
+                os.environ.pop("CROSS_REVIEW_MODEL", None)  # Codex's configured model
+            receipt = cr.review_staged(repo, [])
         seconds = time.monotonic() - start
         run = Path(receipt.get("run", ""))
         usage = ""
-        events = run / "events.jsonl"
-        if events.is_file():
+        events = next(run.glob("*/events.jsonl"), None) if receipt.get("run") else None
+        if events:
             usage = next(
                 (line for line in events.read_text().splitlines() if '"turn.completed"' in line), ""
             )[:300]
-        result = receipt.get("result") or {}
+        result: dict[str, Any] = next(iter((receipt.get("results") or {}).values()), {})
         ev = [
             f"receipt approved={receipt.get('approved')} error={receipt.get('error')}",
             f"findings={[(f['priority'], f['issue'][:80]) for f in result.get('findings', [])]}",
@@ -704,7 +712,7 @@ class Probes:
         ok = "error" not in receipt and bool(result)
         if ok:
             cr.validate_result(result)  # raises on a schema mismatch
-        caught = any(f["priority"] in {"P0", "P1", "P2"} for f in result.get("findings", []))
+        caught = any(f["priority"] in {"P0", "P1"} for f in result.get("findings", []))
         ev.append(f"blocking finding on the seeded bug: {caught}")
         return [
             Result(

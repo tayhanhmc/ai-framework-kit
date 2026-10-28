@@ -2,7 +2,7 @@
 
 Opt-in checks of how the installed Claude Code and Codex CLIs really behave, for the
 claims the kit relies on (hooks, plan review, AGENTS.md loading, launch folders, the
-Codex review call). They call the real CLIs, cost a little money and need the user's
+cross-model review call through Codex). They call the real CLIs, cost a little money and need the user's
 logins, so they never run in CI or `check_kit.sh`. Run them when a CLI version changes,
 before trusting a claim in `RECREATE_CODE_ENV_PROMPT.md`, or when a probe row is stale.
 
@@ -10,7 +10,8 @@ before trusting a claim in `RECREATE_CODE_ENV_PROMPT.md`, or when a probe row is
 # list the probes; runs nothing
 uv run --isolated --no-project --python ">=3.11" -- python probes/run_probes.py
 # run them all (about $0.07 of Claude haiku and ~50k mostly cached Codex tokens, ~3 min)
-uv run --isolated --no-project --python ">=3.11" -- python probes/run_probes.py --live
+# (detect-secrets: the review screens what it uploads)
+uv run --isolated --no-project --python ">=3.11" --with detect-secrets==1.5.0 -- python probes/run_probes.py --live
 # a subset, a framework's own scripts, no Codex
 ... run_probes.py --live --only claude.hook p_compaction --framework ~/fw --no-codex
 ```

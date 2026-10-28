@@ -93,7 +93,7 @@ After this, ask only about a gate that fails on the default branch, and at step 
   - a test runner with one passing test;
   - CI running the same gates, with actions pinned by SHA.
 
-  Before landing, pass the Codex review in `docs/agent-workflows/cross-review.md`.
+  Before landing, pass the cross-model review in `docs/agent-workflows/cross-review.md`.
   This is product code, owned by the repo.
 
 Then write `<product>/workspace.toml`:
@@ -184,7 +184,7 @@ Write each file only when it is absent.
 
 **Accepted limits:** a deny rule matches the command as written, so a differently
 spelled merge (`gh api ...`) gets through. A launch inside `repo/` skips the workspace
-rules. Claude's commits need a passing Codex review of the staged tree; human commits,
+rules. Claude's changes need a passing cross-model review before landing; human commits,
 merges and task-branch pushes are never blocked.
 
 ## Step 8: User-level entries
@@ -207,9 +207,9 @@ Show each diff, and apply it only on the user's go-ahead.
 Record each result in the task file. Skip a probe for a tool that is not installed, and
 note it.
 
-1. **Commit review:** commit a scratch change on a scratch branch of the product clone:
-   `cross_review.py check --range main..HEAD` must list it. After
-   `cross_review.py review --commit HEAD` passes, the range check must exit 0. Delete
+1. **Range review:** commit a scratch code change on a scratch branch of the product
+   clone: `cross_review.py check --range main..<branch>` must exit 1. After
+   `cross_review.py review --range main..<branch>` passes, the check must exit 0. Delete
    the branch. The verifier exits 0, and `poe lint` and `poe test` pass.
 2. The gates give the results recorded in step 6.
 3. **Codex deny rules:** `codex execpolicy check --rules <file> -- <words>` gives
@@ -250,7 +250,7 @@ note it.
    question for the user, never something to patch around. Then garden must report
    nothing about this workspace (before this file exists, it flags the missing probes).
 9. **Script review:** if this setup changed a framework script, run the built-in
-   `/code-review` (Codex: `/review`) and the Codex checkpoint over the change. Fix each
+   `/code-review` (Codex: `/review`) and the cross-model commit checkpoint over the change. Fix each
    confirmed finding with a
    regression test; list the rest in the report.
 
@@ -269,7 +269,7 @@ note it.
    must be identical. A file the user edited between the runs keeps their edit.
 3. Archive the task file to `ai/archive/setup-<product>/tasks/`.
 4. Offer one commit of the framework files, listed by explicit path (never
-   `git add -A`). Push only when asked. The Codex checkpoint reviews it like any
+   `git add -A`). Push only when asked. The cross-model checkpoint reviews it like any
    commit; on a first setup that is the whole kit. Fix findings in files this setup
    wrote. Findings in kit files installed unchanged go to the user, who decides whether
    to commit by hand or fix the kit first. The commit includes `.kit-install.toml` and
