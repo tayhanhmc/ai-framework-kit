@@ -42,9 +42,10 @@ through Codex or the Cursor CLI (`agent`).
   reviews that could not run are no round. Past the cap a review refuses before any model
   call, unless `--owner-override "<reason>"`, which the receipt records. `check` lists the
   rounds used and the branch's review runs.
-- `hook` is the Claude PreToolUse hook. On ExitPlanMode it reviews a new plan (uncapped),
-  denies it with findings when the review blocks, and asks the user when the same plan
-  comes back against the same snapshot. On Bash it asks the user before Claude's own calls
+- `hook` is the Claude PreToolUse hook. On ExitPlanMode it reviews a new plan, denies it
+  with findings when the review blocks, and asks the user when the same plan comes back
+  against the same snapshot or when the session's plans used `ROUND_CAP` rounds since the
+  last approval. On Bash it asks the user before Claude's own calls
   that pass `--owner-override`; the owner's `!` commands never reach PreToolUse hooks.
 
 Receipts live in each repository's Git common directory under `ai-framework-review/`.
@@ -1281,7 +1282,18 @@ def plan_hook(payload: dict[str, Any], plan: str) -> dict[str, Any]:
     if current(earlier, digest) and not earlier.get("approved"):
         # The same plan came back after a block, against the same code: the user decides.
         return deny(describe(earlier) + "\nThis exact plan was already blocked.", "ask")
-    receipt = run_review(root, key, task, material, "", trees=trees)
+    # Claude Code keeps one plan file per session, so the session is the plan's lineage; the
+    # hook payload does not name the file.
+    session = payload.get("session_id")
+    lineage = (branch(root), f"plan session {session}") if session else None
+    try:
+        receipt = run_review(root, key, task, material, "", trees=trees, lineage=lineage)
+    except RoundCapError as error:
+        return deny(
+            f"{error}. Stop resubmitting: give the owner the last round's blocking findings"
+            " with your assessment; the owner approves this plan without review or rejects it.",
+            "ask",
+        )
     return {} if receipt.get("approved") else deny(describe(receipt))
 
 

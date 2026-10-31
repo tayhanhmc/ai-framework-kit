@@ -141,8 +141,15 @@ def decision(output: dict[str, Any]) -> str | None:
     return None if value is None else str(value)
 
 
-def plan_hook(start: Path, text: str) -> dict[str, Any]:
-    return cr.hook({"cwd": str(start), "tool_name": "ExitPlanMode", "tool_input": {"plan": text}})
+def plan_hook(start: Path, text: str, session: str = "session-1") -> dict[str, Any]:
+    return cr.hook(
+        {
+            "cwd": str(start),
+            "session_id": session,
+            "tool_name": "ExitPlanMode",
+            "tool_input": {"plan": text},
+        }
+    )
 
 
 def alive(pid: int) -> bool:
@@ -1360,6 +1367,38 @@ def test_blocked_plan_is_reviewed_again_when_the_code_moved(
     stage(clone, 2)
     assert decision(plan_hook(root, unsafe)) == "deny" and len(provider) == 2  # Not "ask".
     assert decision(plan_hook(root, unsafe)) == "ask" and len(provider) == 2
+
+
+def test_plan_hook_asks_the_owner_after_two_blocked_rounds(
+    root: Path, provider: list[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(cr, "ROUND_CAP", ROUND_CAP)
+    assert decision(plan_hook(root, "1. git push --force origin main")) == "deny"
+    assert decision(plan_hook(root, "1. git push --force origin dev")) == "deny"
+    capped = plan_hook(root, "1. git push --force origin next")
+    assert decision(capped) == "ask" and "round cap" in json.dumps(capped)
+    assert len(provider) == 2  # The third plan reaches the owner, not the reviewers.
+
+
+def test_plan_hook_rounds_restart_after_an_approval(
+    root: Path, provider: list[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(cr, "ROUND_CAP", ROUND_CAP)
+    assert decision(plan_hook(root, "1. git push --force origin main")) == "deny"
+    assert plan_hook(root, "1. Open a branch") == {}
+    assert decision(plan_hook(root, "1. git push --force origin dev")) == "deny"
+    assert decision(plan_hook(root, "1. git push --force origin next")) == "deny"
+    assert len(provider) == 4
+
+
+def test_plan_hook_counts_rounds_per_session(
+    root: Path, provider: list[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(cr, "ROUND_CAP", ROUND_CAP)
+    assert decision(plan_hook(root, "1. git push --force origin main")) == "deny"
+    assert decision(plan_hook(root, "1. git push --force origin dev")) == "deny"
+    other = plan_hook(root, "1. git push --force origin next", session="session-2")
+    assert decision(other) == "deny" and len(provider) == 3
 
 
 @pytest.mark.parametrize(

@@ -83,7 +83,9 @@ The script enforces two rounds per lineage since its last approval: a commit's b
 subject, a range's head branch, or a plan file's path. The third refuses with exit 3
 before any model call; take the findings to the user with your assessment. Only the user
 lifts the cap, with `--owner-override "<reason>"`, which the receipt records; the Bash
-hook asks the user before Claude passes it. The `ExitPlanMode` hook is not capped.
+hook asks the user before Claude passes it. The `ExitPlanMode` hook caps a session's plans
+the same way (two blocked rounds since the last approval). A third submission asks the
+user instead of reviewing; stop resubmitting and bring the findings with your assessment.
 `check` reports the rounds used.
 
 ## Enforcement
