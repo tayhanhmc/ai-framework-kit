@@ -231,7 +231,7 @@ These sections are required, in this order (the verifier checks the headings):
   - Code goes to the product repo; framework files (AGENTS.md, `ai/`, `.claude/`,
     `.agents/`, `.codex/`, `docs/`) never do.
   - Commit subjects follow `type(scope): subject`, e.g. `fix(parser): handle empty
-    input`; the assistant's default co-author trailer stays.
+    input`.
   - The contribution flow from step 5. For a team repo, for example: one branch per
     task; commit and push it without asking; open a PR only when asked; never push to
     `main`, merge or deploy. For a solo repo, for example: commit to `main`; run the
