@@ -1632,7 +1632,10 @@ def test_hook_plan_rounds_restart_after_an_approval(root: Path, provider: list[s
     assert plan_hook(root, "two: open a branch", **session) == {}
     assert decision(plan_hook(root, "three: git push --force", **session)) == "deny"
     assert decision(plan_hook(root, "four: git push --force", **session)) == "deny"
-    assert decision(plan_hook(root, "five: git push --force", **session)) == "ask"
+    capped = plan_hook(root, "five: git push --force", **session)
+    assert decision(capped) == "ask"
+    # `review --plan` records a file lineage, so it cannot lift a session's cap.
+    assert "--plan" not in json.dumps(capped)
     assert len(provider) == 4
 
 

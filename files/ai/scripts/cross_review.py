@@ -1297,10 +1297,15 @@ def plan_hook(payload: dict[str, Any], plan: str) -> dict[str, Any]:
     try:
         receipt = run_review(root, key, task, material, "", trees=trees, lineage=lineage)
     except RoundCapError as exc:
+        # `review --plan` records a file lineage, so it can only lift a file lineage's cap.
+        lift = (
+            f" or lift the cap with `cross_review.py review --plan {source}"
+            ' --owner-override "<reason>"`'
+            if source
+            else ""
+        )
         return deny(
-            f"Cross-model review {exc}. The owner decides: approve this plan as it is, or lift"
-            f" the cap with `cross_review.py review --plan {source or '<plan file>'}"
-            ' --owner-override "<reason>"`.',
+            f"Cross-model review {exc}. The owner decides: approve this plan as it is{lift}.",
             "ask",
         )
     return {} if receipt.get("approved") else deny(describe(receipt))
