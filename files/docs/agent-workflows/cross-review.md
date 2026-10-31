@@ -77,16 +77,18 @@ Sort each blocking finding before changing code. Fix it with the smallest change
 failure is real and inside the task. Dispute it with evidence in a file passed as
 `--feedback <file>`: the reviewer rereviews with its earlier findings and your response.
 Take it to the user when fixing it would widen the task. Leave P3 findings, and a
-commit's P2 findings, unfixed unless the user asks.
+commit's P2 findings, unfixed unless the user asks. Sort findings from a reviewer that
+does not rank them, such as Claude's `/code-review`, by the same rule: fix real failures
+in current behaviour inside the task; leave hardening and style unless the user asks.
 
 The script enforces two rounds per lineage since its last approval: a commit's branch and
 subject, a range's head branch, or a plan file's path. The third refuses with exit 3
 before any model call; take the findings to the user with your assessment. Only the user
 lifts the cap, with `--owner-override "<reason>"`, which the receipt records; the Bash
-hook asks the user before Claude passes it. The `ExitPlanMode` hook caps a session's plans
-the same way (two blocked rounds since the last approval). A third submission asks the
-user instead of reviewing; stop resubmitting and bring the findings with your assessment.
-`check` reports the rounds used.
+hook asks the user before Claude passes it. The `ExitPlanMode` hook counts its rounds
+against the plan file Claude Code writes (the same lineage as `--plan` on that file), else
+the session; past the cap the next plan goes to the user without a model call, to approve
+it as it is or lift the cap. `check` reports the rounds used.
 
 ## Enforcement
 
@@ -111,8 +113,8 @@ path is not stopped (`docs/dev/decisions.md`, "Integration: cross-model review")
 Keep secrets in environment variables, not in files inside checkouts.
 
 Receipts and raw runs live under each repository's Git common directory in
-`ai-framework-review/`, so each machine keeps its own. One review runs per repository at
-a time. Editing during a review is safe: it covers the snapshot it started with. A plan
+`ai-framework-review/`, so each machine keeps its own. Reviews of different changes and
+lineages run at once; two of the same change or lineage run one at a time. Editing during a review is safe: it covers the snapshot it started with. A plan
 snapshot writes Git objects through a temporary index; the real index is untouched. An
 interrupted review, like a failed one, never approves and revokes an earlier approval of
 the same content.

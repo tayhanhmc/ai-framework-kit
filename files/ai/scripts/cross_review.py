@@ -44,9 +44,11 @@ through Codex or the Cursor CLI (`agent`).
   rounds used and the branch's review runs.
 - `hook` is the Claude PreToolUse hook. On ExitPlanMode it reviews a new plan, denies it
   with findings when the review blocks, and asks the user when the same plan comes back
-  against the same snapshot or when the session's plans used `ROUND_CAP` rounds since the
-  last approval. On Bash it asks the user before Claude's own calls
-  that pass `--owner-override`; the owner's `!` commands never reach PreToolUse hooks.
+  against the same snapshot. Its rounds count against the plan file Claude Code wrote
+  (`planFilePath`, the same lineage as `review --plan` on that file), else the session;
+  past the cap it asks the user without calling a model. On Bash it asks the user before
+  Claude's own calls that pass `--owner-override`; the owner's `!` commands never reach
+  PreToolUse hooks.
 
 Receipts live in each repository's Git common directory under `ai-framework-review/`.
 Exit codes: 0 pass, 1 blocked, 2 could not run, 3 round cap reached. This is a workflow
@@ -927,7 +929,7 @@ def run_review(
         if lineage and used >= ROUND_CAP and not override:
             raise RoundCapError(
                 f"round cap reached: take the blocking findings to the owner"
-                f" ({lineage[1]}: {used} rounds)"
+                f" ({lineage[1]}: {used} of {ROUND_CAP} rounds)"
             )
         run = folder / "runs" / uuid.uuid4().hex
         run.mkdir(parents=True, mode=0o700)
@@ -1273,6 +1275,10 @@ def deny(reason: str, decision: str = "deny") -> dict[str, Any]:
 
 
 def plan_hook(payload: dict[str, Any], plan: str) -> dict[str, Any]:
+    """The ExitPlanMode decision on `plan`: allow, deny with findings, or ask the user when
+    the same plan comes back against the same snapshot or its lineage reached the round cap.
+    The lineage is the plan file Claude Code revises in place across one plan's rounds, else
+    the session."""
     start = Path(payload["cwd"]).resolve()
     root = framework_root(start)
     key, task, material, trees = plan_request(root, start, plan)
@@ -1282,16 +1288,19 @@ def plan_hook(payload: dict[str, Any], plan: str) -> dict[str, Any]:
     if current(earlier, digest) and not earlier.get("approved"):
         # The same plan came back after a block, against the same code: the user decides.
         return deny(describe(earlier) + "\nThis exact plan was already blocked.", "ask")
-    # Claude Code keeps one plan file per session, so the session is the plan's lineage; the
-    # hook payload does not name the file.
-    session = payload.get("session_id")
-    lineage = (branch(root), f"plan session {session}") if session else None
+    source = str((payload.get("tool_input") or {}).get("planFilePath") or "")
+    session = str(payload.get("session_id") or "")
+    if source:
+        lineage: tuple[str, str] | None = (branch(root), f"plan {Path(source).resolve()}")
+    else:
+        lineage = (branch(root), f"plan session {session}") if session else None
     try:
         receipt = run_review(root, key, task, material, "", trees=trees, lineage=lineage)
-    except RoundCapError as error:
+    except RoundCapError as exc:
         return deny(
-            f"{error}. Stop resubmitting: give the owner the last round's blocking findings"
-            " with your assessment; the owner approves this plan without review or rejects it.",
+            f"Cross-model review {exc}. The owner decides: approve this plan as it is, or lift"
+            f" the cap with `cross_review.py review --plan {source or '<plan file>'}"
+            ' --owner-override "<reason>"`.',
             "ask",
         )
     return {} if receipt.get("approved") else deny(describe(receipt))
