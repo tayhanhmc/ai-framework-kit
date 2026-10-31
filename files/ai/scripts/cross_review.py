@@ -74,7 +74,7 @@ import tomllib
 import uuid
 from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor, wait
-from contextlib import contextmanager, suppress
+from contextlib import ExitStack, contextmanager, suppress
 from pathlib import Path
 from typing import Any
 
@@ -406,13 +406,24 @@ def write_json(path: Path, data: dict[str, Any]) -> None:
     temporary.replace(path)
 
 
+def key_lock(folder: Path, key: str) -> Path:
+    return folder / "locks" / f"{key}.lock"
+
+
+def lineage_lock(folder: Path, lineage: str) -> Path:
+    return folder / "locks" / f"lineage-{sha256(lineage.encode())}.lock"
+
+
 @contextmanager
-def locked(path: Path) -> Iterator[None]:
+def locked(
+    path: Path, busy: str = "a review is already running", *, block: bool = False
+) -> Iterator[None]:
+    path.parent.mkdir(exist_ok=True, mode=0o700)
     with path.open("a", encoding="utf-8") as lock:
         try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fcntl.flock(lock, fcntl.LOCK_EX | (0 if block else fcntl.LOCK_NB))
         except BlockingIOError as exc:
-            raise ReviewError("a review is already running in this repository") from exc
+            raise ReviewError(busy) from exc
         try:
             yield
         finally:
@@ -902,7 +913,14 @@ def run_review(
         f"{RULES}\n\n{material}\n\nPRIOR REVIEW OF THIS CONTENT (independently verify)\n"
         f"{json.dumps(prior)}\n\nIMPLEMENTER RESPONSE (independently verify)\n{feedback}"
     )
-    with locked(folder / "review.lock"):
+    # Reviews of other keys and lineages run alongside; one lineage runs one at a time, so
+    # it cannot dodge the round cap.
+    with ExitStack() as held:
+        busy = "a review of this change is already running"
+        held.enter_context(locked(key_lock(folder, key), busy))
+        if lineage:
+            busy = f"a review is already running in lineage {lineage[1]!r}"
+            held.enter_context(locked(lineage_lock(folder, lineage[1]), busy))
         rounds = read_json(folder / "rounds.json").get("runs", [])
         used = rounds_used(rounds, lineage[1]) if lineage else 0
         if lineage and used >= ROUND_CAP and not override:
@@ -953,7 +971,10 @@ def run_review(
                     "key": key,
                     "approved": outcome["approved"],
                 }
-                write_json(folder / "rounds.json", {"runs": [*rounds, entry]})
+                # Re-read: another lineage's review may have added its round meanwhile.
+                with locked(folder / "rounds.lock", block=True):
+                    runs = read_json(folder / "rounds.json").get("runs", [])
+                    write_json(folder / "rounds.json", {"runs": [*runs, entry]})
         write_json(receipt_path, receipt)
     return receipt
 

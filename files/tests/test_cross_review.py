@@ -328,8 +328,89 @@ def test_failure_never_passes_and_is_retried(
 
 def test_lock_prevents_duplicate_review(clone: Path, provider: list[str]) -> None:
     stage(clone, 2)
-    with cr.locked(cr.store(clone) / "review.lock"), pytest.raises(cr.ReviewError, match="already"):
+    key = cr.commit_key(*cr.candidate(clone))
+    with (
+        cr.locked(cr.key_lock(cr.store(clone), key)),
+        pytest.raises(cr.ReviewError, match="already"),
+    ):
         cr.review_staged(clone, [])
+
+
+def test_another_keys_lock_does_not_block(clone: Path, provider: list[str]) -> None:
+    stage(clone, 2)
+    with cr.locked(cr.key_lock(cr.store(clone), "commit-another")):
+        assert cr.review_staged(clone, [])["approved"]
+
+
+def test_lineage_lock_blocks_a_review_under_another_key(clone: Path, provider: list[str]) -> None:
+    """A second review in a running lineage would dodge the round cap, whatever its key."""
+    stage(clone, 2)
+    lineage = f"main: staged on {cr.head(clone)[:12]}"
+    with (
+        cr.locked(cr.lineage_lock(cr.store(clone), lineage)),
+        pytest.raises(cr.ReviewError, match="already"),
+    ):
+        cr.review_staged(clone, [])
+
+
+def test_reviews_of_different_plans_run_at_once(
+    root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    plans = ("Add a test", "Fix a bug")
+    spans: dict[str, list[float]] = {plan: [] for plan in plans}
+
+    def slow(target: Path, folder: Path, prompt: str, model: str) -> dict[str, Any]:
+        if "FINDINGS TO VOTE ON" in prompt:
+            return ballot(prompt)
+        plan = next(plan for plan in plans if plan in prompt)
+        spans[plan].append(time.monotonic())
+        time.sleep(0.5)
+        spans[plan].append(time.monotonic())
+        return result()
+
+    monkeypatch.setattr(cr, "cursor", slow)
+    # Concurrent reviews are separate processes; threads stand in, and only the main thread
+    # may install signal handlers.
+    monkeypatch.setattr(cr, "interruptible", contextlib.nullcontext)
+    receipts: dict[str, dict[str, Any]] = {}
+
+    def review(plan: str) -> None:
+        receipts[plan] = cr.review_plan(root / "shop", plan)
+
+    threads = [threading.Thread(target=review, args=(plan,)) for plan in plans]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert all(receipts[plan]["approved"] for plan in plans)
+    first, second = (spans[plan] for plan in plans)
+    assert min(first) < max(second) and min(second) < max(first)
+
+
+def test_rounds_from_a_concurrent_review_survive(
+    root: Path, provider: list[str], monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Another lineage's review that finishes mid-review keeps its rounds entry."""
+    outer, inner = tmp_path / "outer.md", tmp_path / "inner.md"
+    outer.write_text("Add a test")
+    inner.write_text("Fix a bug")
+    fake = cr.cursor
+    nested: list[dict[str, Any]] = []
+
+    def midway(target: Path, folder: Path, prompt: str, model: str) -> dict[str, Any]:
+        if model == cr.PANEL[0] and "Add a test" in prompt and "FINDINGS TO VOTE ON" not in prompt:
+            nested.append(cr.review_plan(root / "shop", "Fix a bug", source=inner))
+        return fake(target, folder, prompt, model)
+
+    monkeypatch.setattr(cr, "cursor", midway)
+    # Concurrent reviews are separate processes; threads stand in, and only the main thread
+    # may install signal handlers.
+    monkeypatch.setattr(cr, "interruptible", contextlib.nullcontext)
+    assert cr.review_plan(root / "shop", "Add a test", source=outer)["approved"]
+    assert [receipt["approved"] for receipt in nested] == [True]
+    runs = cr.read_json(cr.store(root) / "rounds.json")["runs"]
+    lineages = {entry["lineage"] for entry in runs}
+    assert lineages == {f"plan {outer.resolve()}", f"plan {inner.resolve()}"}
 
 
 def test_changed_context_or_repository_is_reviewed_again(
@@ -1149,7 +1230,7 @@ def test_timeout_counts_time_the_machine_slept(
     assert not receipt["approved"]
     assert "timed out" in receipt["error"]
     assert not alive(int(pids.read_text().split()[1]))
-    with cr.locked(cr.store(clone) / "review.lock"):
+    with cr.locked(cr.key_lock(cr.store(clone), receipt["key"])):
         pass
 
 

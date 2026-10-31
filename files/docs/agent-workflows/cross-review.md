@@ -27,7 +27,8 @@ others' findings (skipped when nothing could block). A P0-P2 finding blocks when
 at least two agree votes and more agree than disagree, its author counting as one. At
 least three models must finish both stages. Anthropic models, and Cursor's `auto`, are
 refused. Each reviewer call may run `$CROSS_REVIEW_TIMEOUT` seconds (default 1200),
-counting time the machine sleeps.
+counting time the machine sleeps. Reviews may run concurrently, except two of the same
+change or the same round lineage.
 
 ## The three checkpoints
 
