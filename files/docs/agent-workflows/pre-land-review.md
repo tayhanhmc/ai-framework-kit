@@ -89,4 +89,5 @@ has one; otherwise:
   pasting output. State checkable facts, never "should work".
 - Never cite framework files (`ai/`, task or plan paths, these workflow docs) or session
   history: the PR lives in the product repo.
-- Open it as a draft until steps 1-3 pass; update the text when the change does.
+- Open a PR only when the project's flow or the user asks for one; open it as a draft
+  until the steps above that apply pass, and update the text when the change does.
