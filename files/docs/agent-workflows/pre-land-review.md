@@ -68,3 +68,25 @@ A fresh context from the other model family. From Claude, with Codex:
 
 Apply or reject each item with one line of reason, recorded in the task list. Run this
 step for new modules, new abstractions or a change much larger than its task needs.
+
+## PR text
+
+<!-- added 2026-11-02: PR descriptions restated the diff and left out how the change was verified -->
+
+Write for a reviewer who has not seen the session. Use the repo's PR template when it
+has one; otherwise:
+
+- **Title:** the repo's commit-subject format, imperative, under 72 characters, one change.
+- **Body**, in this order, skipping a section with nothing to say:
+  - **Why:** the problem or goal in one to three sentences; link the issue.
+  - **What changed:** behaviour and interfaces, not a file tour; name anything breaking,
+    renamed, migrated or removed.
+  - **How verified:** commands run and their results; what was not tested, and why.
+  - **Risk and rollback:** what could break, for whom, and how to undo it.
+  - **Review notes:** where to look first; base and merge order for stacked PRs;
+    follow-ups left out.
+- Readable in a minute: link long logs and attach screenshots for UI changes rather than
+  pasting output. State checkable facts, never "should work".
+- Never cite framework files (`ai/`, task or plan paths, these workflow docs) or session
+  history: the PR lives in the product repo.
+- Open it as a draft until steps 1-3 pass; update the text when the change does.

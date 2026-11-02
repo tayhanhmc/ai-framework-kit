@@ -27,6 +27,7 @@ owner, one at a time, and can be rolled back with Git.
 | Commit gate removed | Claude's commits are not blocked; unreviewed commits are listed and reviewed at landing | Remove the commit-gate `cross_review.py` entries from `.claude/settings.json` and each workspace's: the `PreToolUse` `Bash` one with `"if": "Bash(*commit*)"` and the `PostToolUse`/`PostToolUseFailure` `Bash` ones (the Codex-or-Cursor row then adds a `PreToolUse` `Bash` `hook` entry without that `if`); in the root AGENTS.md `## Verify your work`, replace the review sentence with the one in `RECREATE_CODE_ENV_PROMPT.md` |
 | `ExitPlanMode` plan reviews capped at two rounds per plan file (else per session) since its last approval | The third blocked plan in a lineage goes to the user without a model call | None |
 | Test first for bug fixes and specified behaviour changes, shown failing; other work is not test-first | Agents write and run the failing test before the fix | In the root AGENTS.md `## Verify your work`, replace the regression-test sentence with the one in `RECREATE_CODE_ENV_PROMPT.md` |
+| PR text section in the pre-land review | Agents write PR titles and bodies to one short structure (why, what changed, how verified, risk and rollback, review notes) | None: the installer updates `pre-land-review.md` |
 
 ## Procedure
 
