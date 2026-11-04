@@ -10,6 +10,7 @@ Claude Code 2.1.295 or later for `onFailure: block`.
 
 - [Reviewers](#reviewers)
 - [The three checkpoints](#the-three-checkpoints)
+- [What reviewers check](#what-reviewers-check)
 - [Acting on findings](#acting-on-findings)
 - [Enforcement](#enforcement)
 - [Data and limits](#data-and-limits)
@@ -68,6 +69,16 @@ of staged work, so pass requirement files as context, not a task file whose prog
 will edit before committing. A range check does not re-judge context. `--force` reviews
 again regardless. Receipts record provider, models, results, votes, policy, time and
 context.
+
+## What reviewers check
+
+Beyond correctness, security, regressions and missing requirements inside the task, every
+review makes three explicit craft passes over what the change adds, each finding naming
+the simpler version: simplicity (no control flow, indirection, state or layers a more
+direct version would not need), over-engineering (no abstraction, option or fallback that
+prevents no named failure, no duplicated helper, dead code or impossible-state check) and
+beautiful code (clear names, one job per function, plain over clever, the file's own
+style). Each is P2 when it would mislead or slow a maintainer; taste alone is P3.
 
 ## Acting on findings
 
